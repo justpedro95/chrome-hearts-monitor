@@ -1,0 +1,14 @@
+services:
+  chrome-hearts-monitor:
+    build: .
+    image: chrome-hearts-monitor:latest
+    container_name: chrome-hearts-monitor
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

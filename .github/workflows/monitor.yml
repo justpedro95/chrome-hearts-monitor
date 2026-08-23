@@ -1,0 +1,80 @@
+name: Chrome Hearts Monitor
+
+on:
+  schedule:
+    # Every 5 minutes - GitHub's minimum for scheduled workflows.
+    # GitHub runs these on a best-effort basis; expect occasional drift.
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      reseed:
+        description: "Re-baseline: forget everything and alert on nothing this run"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths: ["**.py", ".github/workflows/monitor.yml"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: chrome-hearts-monitor
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Re-baseline (manual runs only)
+        if: inputs.reseed
+        run: rm -f state/products.json
+
+      - name: Check Chrome Hearts for new products
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          ROLE_MENTION: ${{ vars.ROLE_MENTION }}
+          STATE_BACKEND: json
+          STATE_JSON: state/products.json
+          ALERT_NEW_PRODUCTS: "true"
+          ALERT_RESTOCKS: ${{ vars.ALERT_RESTOCKS || 'false' }}
+          ALERT_PRICE_CHANGES: ${{ vars.ALERT_PRICE_CHANGES || 'false' }}
+          ALERT_NEW_CATEGORIES: ${{ vars.ALERT_NEW_CATEGORIES || 'false' }}
+          ENRICH_PRODUCTS: "true"
+          REQUEST_DELAY_SECONDS: "1.5"
+          LOG_LEVEL: INFO
+        run: python monitor.py --once
+
+      - name: Persist state
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain state/)" ]; then
+            echo "No catalog change - nothing to commit."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/
+          git commit -m "state: catalog update $(date -u '+%Y-%m-%d %H:%M UTC') [skip ci]"
+          for attempt in 1 2 3; do
+            if git push; then
+              echo "pushed on attempt $attempt"
+              exit 0
+            fi
+            echo "push rejected, rebasing and retrying..."
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+            sleep 3
+          done
+          echo "::error::Could not push state after 3 attempts"
+          exit 1

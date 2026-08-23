@@ -1,0 +1,26 @@
+name: Selftest (scrape and print, never notifies)
+
+# Run this from the Actions tab whenever you want to see exactly what the
+# monitor is parsing off the live site. It touches no state and sends no alerts.
+on:
+  workflow_dispatch:
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Offline test suite
+        run: |
+          python tests/test_monitor.py
+          python tests/test_jsonstate.py
+      - name: Live scrape
+        env:
+          LOG_LEVEL: INFO
+        run: python monitor.py --selftest

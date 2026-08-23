@@ -1,0 +1,24 @@
+name: Keepalive
+
+# GitHub disables scheduled workflows on a repo with no activity for 60 days.
+# The monitor only commits when the catalog changes, which may be rarer than
+# that - so this makes one tiny commit a week to keep the schedule alive.
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          date -u '+%Y-%m-%dT%H:%M:%SZ' > .github/keepalive
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/keepalive
+          git diff --staged --quiet || (git commit -m "keepalive [skip ci]" && git push)
