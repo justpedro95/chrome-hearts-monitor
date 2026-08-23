@@ -171,7 +171,21 @@ def test_cycle_and_alerts():
         config.ALERT_RESTOCKS = False
         config.ALERT_PRICE_CHANGES = False
 
-        print("\n[6] failure handling")
+        print("\n[6a] a 200 that parses to nothing is a failure, not an empty store")
+
+        class BlankFetcher(FakeFetcher):
+            def get(self, url, use_cache=True, attempts=3):
+                return 200, "<html><body>maintenance</body></html>"
+
+        count_before = store.product_count()
+        result = run_cycle(store, BlankFetcher(""))
+        check("empty parse on a known catalog is an error",
+              result.get("error") == "parsed-zero-products", result)
+        check("empty parse forgets nothing", store.product_count() == count_before)
+        sent.clear()
+        check("empty parse sends no alerts", not sent)
+
+        print("\n[6b] failure handling")
         class DeadFetcher(FakeFetcher):
             def get(self, url, use_cache=True, attempts=3):
                 if url.endswith(".xml"):
@@ -182,6 +196,30 @@ def test_cycle_and_alerts():
         check("a fully blocked sweep is an error, not an empty catalog",
               result.get("error") == "all-categories-failed", result)
         check("blocked sweep wipes nothing from state", store.product_count() == 4, store.product_count())
+        store.close()
+
+
+def test_empty_seed():
+    print("\n[6c] refusing to seed an empty baseline")
+    notifier._post = lambda payload, attempts=4: True
+    with tempfile.TemporaryDirectory() as tmp:
+        store = Store(os.path.join(tmp, "state.db"))
+        config.CATEGORIES = ["/scents"]
+        config.DISCOVER_CATEGORIES = False
+
+        class BlankFetcher(FakeFetcher):
+            def get(self, url, use_cache=True, attempts=3):
+                return 200, "<html><body>maintenance</body></html>"
+
+        result = run_cycle(store, BlankFetcher(""))
+        check("does not seed a zero-product baseline",
+              result.get("error") == "seed-parsed-nothing", result)
+        check("stays unseeded so a later good run baselines properly",
+              store.get_meta("seeded") != "1")
+
+        good = (HERE / "fixture_category.html").read_text()
+        result = run_cycle(store, FakeFetcher(good, pdp_html=(HERE / "fixture_pdp.html").read_text()))
+        check("the next healthy run seeds correctly", result.get("seeded") == 3, result)
         store.close()
 
 
@@ -204,6 +242,7 @@ if __name__ == "__main__":
     test_url_filtering()
     test_enrichment()
     test_cycle_and_alerts()
+    test_empty_seed()
     test_discord_chunking()
     print(f"\n{'='*60}\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

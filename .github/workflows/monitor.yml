@@ -11,10 +11,6 @@ on:
         description: "Re-baseline: forget everything and alert on nothing this run"
         type: boolean
         default: false
-  push:
-    branches: [main]
-    paths: ["**.py", ".github/workflows/monitor.yml"]
-
 permissions:
   contents: write
 

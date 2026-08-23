@@ -90,6 +90,27 @@ def run_cycle(store: Store, fetcher: Fetcher, notify: bool = True) -> dict:
     known_pids = store.known_pids()
     first_run = store.get_meta("seeded") != "1"
 
+    # A 200 response we simply failed to parse looks identical to "the store is
+    # empty" unless we say otherwise. Refuse to seed an empty baseline, and
+    # refuse to act on an empty sweep when we already know of a real catalog -
+    # otherwise a markup change silently re-alerts the entire catalogue later.
+    if not products:
+        if first_run:
+            log.error(
+                "seed aborted: fetched %d categories but parsed 0 products - "
+                "run --selftest, the page markup has probably changed",
+                len(categories),
+            )
+            store.commit()
+            return {"error": "seed-parsed-nothing", "categories": len(categories)}
+        if store.product_count() > 0:
+            log.error(
+                "parsed 0 products but %d are known - treating as a scrape failure",
+                store.product_count(),
+            )
+            store.commit()
+            return {"error": "parsed-zero-products", "known": store.product_count()}
+
     new_products, restocks, price_changes = [], [], []
 
     for pid, product in products.items():
