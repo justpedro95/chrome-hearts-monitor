@@ -173,7 +173,9 @@ def _normalise_path(href: str) -> Optional[str]:
     if not href:
         return None
     href = href.strip()
-    if href.startswith("#") or href.startswith("mailto:") or href.startswith("tel:"):
+    # Reject non-navigational hrefs. "javascript:void(0);" dropdown toggles were
+    # being turned into a bogus /void(0); category that 404s on every cycle.
+    if href.startswith("#") or ":" in href.split("/")[0] and not href.lower().startswith(("http://", "https://")):
         return None
     parsed = urlparse(urljoin(config.BASE_URL + "/", href))
     if parsed.netloc and "chromehearts.com" not in parsed.netloc:
@@ -264,6 +266,25 @@ def _first_image(container) -> Optional[str]:
     return None
 
 
+TRAILING_NOISE_RE = re.compile(
+    r"(?:\s*(?:\$\s?[0-9][0-9,]*(?:\.[0-9]{2})?(?:\s*[-\u2013]\s*\$\s?[0-9][0-9,]*(?:\.[0-9]{2})?)?"
+    r"|sold\s*out|out\s*of\s*stock|unavailable|new))+\s*$",
+    re.I,
+)
+
+
+def _clean_name(text: Optional[str]) -> Optional[str]:
+    """Strip price and availability wording that bleeds in from the tile text."""
+    if not text:
+        return text
+    previous = None
+    while previous != text:
+        previous = text
+        text = TRAILING_NOISE_RE.sub("", text).strip()
+        text = re.sub(r"[\s\-\u2013,|]+$", "", text).strip()
+    return text or None
+
+
 def _tile_name(container, anchor) -> Optional[str]:
     for attr in ("aria-label", "title"):
         val = (anchor.get(attr) or "").strip()
@@ -300,7 +321,7 @@ def parse_products(html: str, category: str) -> Dict[str, Product]:
 
         existing = products.get(pid)
         product = existing or Product(pid=pid, url=url, category=category)
-        product.name = product.name or _tile_name(container, anchor)
+        product.name = product.name or _clean_name(_tile_name(container, anchor))
         product.image = product.image or _first_image(container)
         if price_match and not product.price:
             product.price = "$" + price_match.group(1)

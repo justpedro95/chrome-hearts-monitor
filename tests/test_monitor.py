@@ -86,6 +86,28 @@ def test_url_filtering():
         check(f"{path} -> {'product' if expected else 'not a product'}", matched == expected)
 
 
+def test_name_and_href_cleaning():
+    print("\n[2b] tile-text cleaning (real strings from the live site)")
+    from scraper import _clean_name
+
+    for raw, want in [
+        ("BOXER BRIEF - SHORTS $85 - $110", "BOXER BRIEF - SHORTS"),
+        ("STENCIL SOCKS $255 OUT OF STOCK", "STENCIL SOCKS"),
+        ("LEGGINGS $245", "LEGGINGS"),
+        ("+22+ Eau de Parfum", "+22+ Eau de Parfum"),
+        ("Matchstick Holder", "Matchstick Holder"),
+    ]:
+        check(f"{raw!r} -> {want!r}", _clean_name(raw) == want, _clean_name(raw))
+
+    for href, want in [
+        ("javascript:void(0);", None),
+        ("mailto:a@b.com", None),
+        ("/scents", "/scents"),
+        ("https://instagram.com/chromehearts", None),
+    ]:
+        check(f"href {href!r} rejected/kept correctly", scraper._normalise_path(href) == want)
+
+
 def test_enrichment():
     print("\n[3] product page enrichment (JSON-LD + Open Graph)")
     pdp = (HERE / "fixture_pdp.html").read_text()
@@ -240,6 +262,7 @@ def test_discord_chunking():
 if __name__ == "__main__":
     test_parsing()
     test_url_filtering()
+    test_name_and_href_cleaning()
     test_enrichment()
     test_cycle_and_alerts()
     test_empty_seed()
