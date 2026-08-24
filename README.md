@@ -68,6 +68,11 @@ is the recommended combination.
 `ALERT_RESTOCKS`, `ALERT_PRICE_CHANGES`, `ALERT_NEW_CATEGORIES` (`true`/`false`),
 and `ROLE_MENTION` (e.g. `<@&123456789012345678>`).
 
+**It reports its own health to Discord.** You never need to open the Actions
+logs to know whether it's working. If it fetches pages but parses nothing, gets
+blocked by the CDN, or fails repeatedly, it says so in the same channel as the
+product alerts — and says so again when it recovers. Silence means healthy.
+
 **Expect some drift.** GitHub runs scheduled workflows on a best-effort basis and
 defers them under load — a nominal 5 minutes is often 5–15 in practice, and
 occasionally a run is skipped entirely. It is reliable in aggregate, not punctual.

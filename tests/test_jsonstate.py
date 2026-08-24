@@ -70,5 +70,51 @@ if __name__ == "__main__":
         result = fresh_run(state, AFTER)
         check("corrupt state re-seeds instead of crashing", result.get("seeded") == 4, result)
 
+        print("\n[failure alerting survives process restarts]")
+        state2 = os.path.join(tmp, "state2", "products.json")
+        config.FAILURE_ALERT_THRESHOLD = 3
+
+        class BlockedFetcher(FakeFetcher):
+            def get(self, url, use_cache=True, attempts=3):
+                return 403, None
+
+        from jsonstore import JsonStore
+
+        def blocked_run(path):
+            config.STATE_JSON = path
+            store = JsonStore(path)
+            r = run_cycle(store, BlockedFetcher(""))
+            from monitor import record_failure, record_success
+            if r.get("error"):
+                record_failure(store, r["error"], r.get("detail", ""), immediate=bool(r.get("immediate")))
+            else:
+                record_success(store)
+            store.close()
+            return r
+
+        # Seed a healthy baseline first so we exercise the non-seed failure path.
+        fresh_run(state2, BEFORE)
+        sent.clear()
+
+        blocked_run(state2)
+        check("failure 1 of 3 stays quiet", len(sent) == 0, len(sent))
+        blocked_run(state2)
+        check("failure 2 of 3 stays quiet", len(sent) == 0, len(sent))
+        blocked_run(state2)
+        check("failure 3 of 3 alerts once", len(sent) == 1, len(sent))
+        blocked_run(state2)
+        check("failure 4 does not re-alert", len(sent) == 1, len(sent))
+
+        sent.clear()
+        fresh_run(state2, BEFORE)
+        config.STATE_JSON = state2
+        store = JsonStore(state2)
+        from monitor import record_success
+        record_success(store)
+        store.close()
+        check("recovery posts exactly one message", len(sent) == 1, len(sent))
+        check("counter reset after recovery",
+              JsonStore(state2).get_meta("consecutive_failures") in (0, "0"))
+
     print(f"\n{'='*60}\n{len(PASS)} passed, {len(FAIL)} failed")
     sys.exit(1 if FAIL else 0)

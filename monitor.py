@@ -85,7 +85,9 @@ def run_cycle(store: Store, fetcher: Fetcher, notify: bool = True) -> dict:
     # Every category failed => almost certainly network/WAF, not an empty store.
     if failures == len(categories):
         store.commit()
-        return {"error": "all-categories-failed", "categories": len(categories)}
+        return {"error": "all-categories-failed", "categories": len(categories),
+                "detail": f"All {len(categories)} category pages failed to fetch - "
+                          "the runner may be blocked by the site's CDN."}
 
     known_pids = store.known_pids()
     first_run = store.get_meta("seeded") != "1"
@@ -102,14 +104,19 @@ def run_cycle(store: Store, fetcher: Fetcher, notify: bool = True) -> dict:
                 len(categories),
             )
             store.commit()
-            return {"error": "seed-parsed-nothing", "categories": len(categories)}
+            return {"error": "seed-parsed-nothing", "categories": len(categories),
+                    "immediate": True,
+                    "detail": f"Fetched {len(categories)} category pages but parsed 0 products. "
+                              "The site markup has probably changed, or the runner is being blocked."}
         if store.product_count() > 0:
             log.error(
                 "parsed 0 products but %d are known - treating as a scrape failure",
                 store.product_count(),
             )
             store.commit()
-            return {"error": "parsed-zero-products", "known": store.product_count()}
+            return {"error": "parsed-zero-products", "known": store.product_count(),
+                    "detail": f"Parsed 0 products but {store.product_count()} are known. "
+                              "Nothing was forgotten and no alerts were sent."}
 
     new_products, restocks, price_changes = [], [], []
 
@@ -191,6 +198,34 @@ def run_cycle(store: Store, fetcher: Fetcher, notify: bool = True) -> dict:
     }
 
 
+def record_failure(store, kind: str, detail: str = "", immediate: bool = False) -> None:
+    """Track consecutive failures in the store so the count survives process exit.
+
+    The Actions deployment runs one cycle per process, so an in-memory counter
+    would reset every 5 minutes and the alert would never fire.
+    """
+    count = int(store.get_meta("consecutive_failures", "0") or 0) + 1
+    store.set_meta("consecutive_failures", count)
+    already = store.get_meta("failure_alerted") == "1"
+    threshold = config.FAILURE_ALERT_THRESHOLD
+    should = immediate or (threshold and count >= threshold)
+    if should and not already:
+        notifier.send_text(
+            f"**Monitor problem: `{kind}`**\n{detail}\n"
+            f"Failed cycles in a row: {count}. Run the Selftest workflow to see what it's reading."
+        )
+        store.set_meta("failure_alerted", "1")
+    store.commit()
+
+
+def record_success(store) -> None:
+    if store.get_meta("failure_alerted") == "1":
+        notifier.send_text("Monitor recovered - reading the site normally again.")
+    if store.get_meta("consecutive_failures", "0") != "0":
+        store.set_meta("consecutive_failures", 0)
+    store.set_meta("failure_alerted", "0")
+
+
 def open_store():
     """Pick the state backend: SQLite for long-running hosts, JSON for CI runs."""
     if config.STATE_BACKEND == "json":
@@ -252,8 +287,6 @@ def main() -> int:
         config.ALERT_RESTOCKS, config.ALERT_PRICE_CHANGES, config.STATE_DB,
     )
 
-    consecutive_failures = 0
-    failure_alerted = False
     last_heartbeat = time.time()
 
     while _running:
@@ -261,27 +294,14 @@ def main() -> int:
         try:
             result = run_cycle(store, fetcher)
             if result.get("error"):
-                consecutive_failures += 1
-                log.error("cycle error: %s (%d in a row)", result["error"], consecutive_failures)
+                log.error("cycle error: %s", result["error"])
+                record_failure(store, result["error"], result.get("detail", ""),
+                               immediate=bool(result.get("immediate")))
             else:
-                if consecutive_failures and failure_alerted:
-                    notifier.send_text("Monitor recovered - scraping the site normally again.")
-                consecutive_failures = 0
-                failure_alerted = False
-        except Exception:
-            consecutive_failures += 1
-            log.exception("unhandled error in cycle (%d in a row)", consecutive_failures)
-
-        if (
-            config.FAILURE_ALERT_THRESHOLD
-            and consecutive_failures >= config.FAILURE_ALERT_THRESHOLD
-            and not failure_alerted
-        ):
-            notifier.send_text(
-                f"Monitor has failed {consecutive_failures} cycles in a row - the site may be "
-                "blocking requests or the page layout changed. Check the container logs."
-            )
-            failure_alerted = True
+                record_success(store)
+        except Exception as exc:
+            log.exception("unhandled error in cycle")
+            record_failure(store, "unhandled-exception", str(exc)[:300])
 
         if config.HEARTBEAT_HOURS and time.time() - last_heartbeat >= config.HEARTBEAT_HOURS * 3600:
             notifier.send_text(f"Heartbeat: monitor alive, tracking {store.product_count()} products.")
