@@ -4,6 +4,11 @@ name: Selftest (scrape and print, never notifies)
 # monitor is parsing off the live site. It touches no state and sends no alerts.
 on:
   workflow_dispatch:
+  # Also runs on the first push so the parser is validated against the live
+  # site before the monitor is ever allowed to alert.
+  push:
+    branches: [main]
+    paths: ["**.py", ".github/workflows/selftest.yml"]
 
 jobs:
   selftest:
