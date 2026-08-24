@@ -69,7 +69,9 @@ class Fetcher:
             "User-Agent": config.USER_AGENT,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
+            # NB: only advertise what urllib3 can decode. Brotli needs the optional
+            # "brotli" package (in requirements.txt); zstd is not supported at all.
+            "Accept-Encoding": "gzip, deflate",
             "Connection": "keep-alive",
             "Upgrade-Insecure-Requests": "1",
             "Sec-Fetch-Dest": "document",
@@ -82,6 +84,7 @@ class Fetcher:
             self.session.proxies.update({"http": config.PROXY_URL, "https": config.PROXY_URL})
         self.etag_store = etag_store or {}
         self._last_request = 0.0
+        self.diagnostics = {}  # url -> what the response actually looked like
 
     def _throttle(self):
         gap = time.time() - self._last_request
@@ -119,12 +122,31 @@ class Fetcher:
                 return 304, None
 
             if resp.status_code == 200:
+                body = resp.text
+                self.diagnostics[url] = {
+                    "status": resp.status_code,
+                    "content_type": resp.headers.get("Content-Type", "?"),
+                    "content_encoding": resp.headers.get("Content-Encoding", "(none)"),
+                    "bytes": len(resp.content),
+                    "chars": len(body),
+                    "looks_like_html": "<html" in body[:4000].lower(),
+                    "product_href_count": len(re.findall(r"/[a-z0-9\-]+/[a-z0-9\-_]+/[A-Za-z0-9_.\-]{5,40}\.html", body)),
+                    "snippet": body[:300].replace("\n", " "),
+                    "final_url": resp.url,
+                }
                 if use_cache:
                     self.etag_store[url] = {
                         "etag": resp.headers.get("ETag"),
                         "last_modified": resp.headers.get("Last-Modified"),
                     }
-                return 200, resp.text
+                return 200, body
+
+            self.diagnostics.setdefault(url, {
+                "status": resp.status_code,
+                "content_type": resp.headers.get("Content-Type", "?"),
+                "content_encoding": resp.headers.get("Content-Encoding", "(none)"),
+                "final_url": resp.url,
+            })
 
             if resp.status_code in (403, 429, 500, 502, 503, 504):
                 retry_after = resp.headers.get("Retry-After")

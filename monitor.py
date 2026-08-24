@@ -20,7 +20,8 @@ from typing import Dict, Tuple
 
 import config
 import notifier
-from scraper import Fetcher, Product, enrich, resolve_categories, scrape_category
+from scraper import (Fetcher, Product, discover_categories, enrich,
+                     resolve_categories, scrape_category)
 from store import Store
 
 log = logging.getLogger("monitor")
@@ -254,10 +255,37 @@ def main() -> int:
 
     if args.selftest:
         fetcher = Fetcher()
+        discovered = discover_categories(fetcher)
+        print(f"\nDiscovered from nav + sitemap: {discovered or '(nothing - suspicious)'}")
         categories = resolve_categories(fetcher)
-        print(f"\nResolved {len(categories)} categories: {', '.join(categories)}\n")
+        print(f"Resolved {len(categories)} categories: {', '.join(categories)}\n")
         products, failures = collect(fetcher, categories)
         print(f"Parsed {len(products)} products ({failures} categories failed)\n")
+
+        if not products or not discovered:
+            print("=" * 72)
+            print("DIAGNOSTICS - what the server actually returned")
+            print("=" * 72)
+            for url, info in fetcher.diagnostics.items():
+                print(f"\n  {url}")
+                for key in ("status", "final_url", "content_type", "content_encoding",
+                            "bytes", "chars", "looks_like_html", "product_href_count"):
+                    if key in info:
+                        print(f"      {key:<20} {info[key]}")
+                if info.get("snippet"):
+                    print(f"      snippet              {info['snippet'][:200]!r}")
+            print()
+            if any(not d.get("looks_like_html", True) for d in fetcher.diagnostics.values()):
+                print("  -> Responses are not HTML. Almost certainly a content-encoding the")
+                print("     client cannot decode, or an interstitial/bot page.")
+            elif all(d.get("product_href_count", 0) == 0 for d in fetcher.diagnostics.values()
+                     if "product_href_count" in d):
+                print("  -> HTML decoded fine but contains no product-shaped URLs at all.")
+                print("     The grid is probably rendered client-side, or the URL shape changed.")
+            else:
+                print("  -> Product URLs ARE present in the HTML but the parser missed them.")
+                print("     PRODUCT_PATH_RE in scraper.py needs updating.")
+            print()
         for pid, product in sorted(products.items(), key=lambda kv: kv[1].category):
             stock = "in stock" if product.in_stock else "SOLD OUT"
             print(f"  [{product.category:<18}] {pid:<18} {(product.name or '?')[:44]:<46} "
