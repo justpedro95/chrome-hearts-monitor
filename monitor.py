@@ -177,6 +177,9 @@ def run_cycle(store: Store, fetcher: Fetcher, notify: bool = True) -> dict:
         log.info("PRICE %s | %s -> %s", product.pid, old_price, product.price)
         embeds.append(notifier.build_embed(product, "price", old_price=old_price))
 
+    if new_products:
+        store.set_meta("last_new_product_at", time.time())
+
     if notify and embeds:
         notifier.send_embeds(embeds)
 
@@ -225,6 +228,51 @@ def record_success(store) -> None:
     if store.get_meta("consecutive_failures", "0") != "0":
         store.set_meta("consecutive_failures", 0)
     store.set_meta("failure_alerted", "0")
+
+
+def _ago(timestamp: float) -> str:
+    if not timestamp:
+        return "not since the monitor started"
+    seconds = max(0, time.time() - float(timestamp))
+    hours = seconds / 3600
+    if hours < 1:
+        return f"{int(seconds // 60)} minutes ago"
+    if hours < 48:
+        return f"{hours:.0f} hours ago"
+    return f"{hours / 24:.0f} days ago"
+
+
+def maybe_heartbeat(store) -> bool:
+    """Post a periodic 'still working' message.
+
+    The timestamp lives in the store, not in memory: under GitHub Actions every
+    cycle is its own process, so an in-memory timer would reset every 5 minutes
+    and never reach the threshold.
+    """
+    if not config.HEARTBEAT_HOURS:
+        return False
+
+    now = time.time()
+    last = float(store.get_meta("last_heartbeat", 0) or 0)
+    if not last:
+        # First healthy cycle - start the clock rather than firing immediately.
+        store.set_meta("last_heartbeat", now)
+        store.commit()
+        return False
+
+    if now - last < config.HEARTBEAT_HOURS * 3600:
+        return False
+
+    last_new = float(store.get_meta("last_new_product_at", 0) or 0)
+    categories = len(store.known_categories())
+    notifier.send_text(
+        f"**Monitor healthy.** Tracking {store.product_count()} products across "
+        f"{categories} sections. Last new product: {_ago(last_new)}. "
+        f"Next check in ~{config.POLL_INTERVAL_SECONDS // 60 or 5} minutes."
+    )
+    store.set_meta("last_heartbeat", now)
+    store.commit()
+    return True
 
 
 def open_store():
@@ -315,8 +363,6 @@ def main() -> int:
         config.ALERT_RESTOCKS, config.ALERT_PRICE_CHANGES, config.STATE_DB,
     )
 
-    last_heartbeat = time.time()
-
     while _running:
         started = time.time()
         try:
@@ -327,13 +373,10 @@ def main() -> int:
                                immediate=bool(result.get("immediate")))
             else:
                 record_success(store)
+                maybe_heartbeat(store)
         except Exception as exc:
             log.exception("unhandled error in cycle")
             record_failure(store, "unhandled-exception", str(exc)[:300])
-
-        if config.HEARTBEAT_HOURS and time.time() - last_heartbeat >= config.HEARTBEAT_HOURS * 3600:
-            notifier.send_text(f"Heartbeat: monitor alive, tracking {store.product_count()} products.")
-            last_heartbeat = time.time()
 
         if args.once:
             break

@@ -68,6 +68,11 @@ is the recommended combination.
 `ALERT_RESTOCKS`, `ALERT_PRICE_CHANGES`, `ALERT_NEW_CATEGORIES` (`true`/`false`),
 and `ROLE_MENTION` (e.g. `<@&123456789012345678>`).
 
+**It says it's alive every 12 hours.** A heartbeat message reports the tracked
+product count and how long since the last new product, so a long quiet stretch
+is distinguishable from a monitor that quietly died. Change the cadence with a
+`HEARTBEAT_HOURS` repository variable, or set it to `0` to turn it off.
+
 **It reports its own health to Discord.** You never need to open the Actions
 logs to know whether it's working. If it fetches pages but parses nothing, gets
 blocked by the CDN, or fails repeatedly, it says so in the same channel as the
@@ -163,7 +168,7 @@ Everything is set in `.env`.
 | `DISCOVER_CATEGORIES` | `true` | Read the nav and sitemap each cycle for new sections. |
 | `ROLE_MENTION` | *(blank)* | e.g. `<@&123456789012345678>` to ping a role on every alert. |
 | `MAX_ALERTS_PER_CYCLE` | `40` | Safety valve so a catalog reshuffle can't dump 200 messages. |
-| `HEARTBEAT_HOURS` | `0` | Set to e.g. `12` for a periodic "still alive" message. |
+| `HEARTBEAT_HOURS` | `12` | Periodic "still working" message with the tracked product count and how long since the last new product. `0` disables. Fires only on healthy cycles, so an outage produces silence plus a failure alert rather than a false all-clear. |
 | `FAILURE_ALERT_THRESHOLD` | `10` | Consecutive failed cycles before it warns you in Discord. |
 | `PROXY_URL` | *(blank)* | Route through an HTTP proxy if your VPS IP gets blocked. |
 

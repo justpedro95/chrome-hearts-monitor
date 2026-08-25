@@ -116,5 +116,41 @@ if __name__ == "__main__":
         check("counter reset after recovery",
               JsonStore(state2).get_meta("consecutive_failures") in (0, "0"))
 
+        print("\n[12-hour heartbeat across separate processes]")
+        import time as _time
+        from monitor import maybe_heartbeat
+        from jsonstore import JsonStore
+
+        state3 = os.path.join(tmp, "state3", "products.json")
+        config.STATE_JSON = state3
+        config.HEARTBEAT_HOURS = 12
+        fresh_run(state3, BEFORE)          # seed
+        sent.clear()
+
+        def hb(path):
+            store = JsonStore(path)
+            fired = maybe_heartbeat(store)
+            store.close()
+            return fired
+
+        check("first healthy cycle starts the clock, sends nothing",
+              hb(state3) is False and not sent, len(sent))
+        check("a cycle 5 minutes later stays quiet", hb(state3) is False and not sent, len(sent))
+
+        # Wind the stored timestamp back 12h+ to simulate a real day passing.
+        store = JsonStore(state3)
+        store.set_meta("last_heartbeat", _time.time() - (12 * 3600 + 60))
+        store.set_meta("last_new_product_at", _time.time() - (30 * 3600))
+        store.close()
+
+        check("fires once past 12 hours", hb(state3) is True and len(sent) == 1, len(sent))
+        body = sent[0]["content"] if sent else ""
+        check("message reports the tracked product count", "3 products" in body, body)
+        check("message reports when the last new product was", "Last new product" in body, body)
+        check("does not fire again on the next cycle", hb(state3) is False and len(sent) == 1, len(sent))
+
+        config.HEARTBEAT_HOURS = 0
+        check("HEARTBEAT_HOURS=0 disables it", hb(state3) is False)
+
     print(f"\n{'='*60}\n{len(PASS)} passed, {len(FAIL)} failed")
     sys.exit(1 if FAIL else 0)

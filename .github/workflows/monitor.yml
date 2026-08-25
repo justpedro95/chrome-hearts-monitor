@@ -48,6 +48,7 @@ jobs:
           ALERT_PRICE_CHANGES: ${{ vars.ALERT_PRICE_CHANGES || 'false' }}
           ALERT_NEW_CATEGORIES: ${{ vars.ALERT_NEW_CATEGORIES || 'false' }}
           ENRICH_PRODUCTS: "true"
+          HEARTBEAT_HOURS: ${{ vars.HEARTBEAT_HOURS || '12' }}
           REQUEST_DELAY_SECONDS: "1.5"
           LOG_LEVEL: INFO
         run: python monitor.py --once
