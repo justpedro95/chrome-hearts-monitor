@@ -65,6 +65,7 @@ SEED_CATEGORIES = _list("SEED_CATEGORIES") or [
     "/intimates",
     "/socks",
     "/scarf",
+    "/sweatpants",
 ]
 
 # --- Alerting ----------------------------------------------------------------

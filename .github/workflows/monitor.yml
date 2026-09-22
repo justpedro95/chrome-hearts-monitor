@@ -23,9 +23,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      # fetch-depth: 0 matters: the state-push retry rebases, and rebasing on
+      # the default shallow clone fails - which turned a lost push race into a
+      # failed run and a failure email.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -64,14 +69,20 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add state/
           git commit -m "state: catalog update $(date -u '+%Y-%m-%d %H:%M UTC') [skip ci]"
-          for attempt in 1 2 3; do
-            if git push; then
+          for attempt in 1 2 3 4 5; do
+            if git push origin "HEAD:${GITHUB_REF_NAME}"; then
               echo "pushed on attempt $attempt"
               exit 0
             fi
-            echo "push rejected, rebasing and retrying..."
-            git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
-            sleep 3
+            echo "push rejected (attempt $attempt), rebasing onto latest..."
+            git fetch origin "${GITHUB_REF_NAME}"
+            git rebase "origin/${GITHUB_REF_NAME}" || {
+              echo "::warning::rebase failed; deferring to the remote state"
+              git rebase --abort || true
+              git reset --hard "origin/${GITHUB_REF_NAME}"
+              exit 0
+            }
+            sleep $((attempt * 3))
           done
-          echo "::error::Could not push state after 3 attempts"
+          echo "::error::Could not push state after 5 attempts"
           exit 1

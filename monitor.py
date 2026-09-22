@@ -20,8 +20,8 @@ from typing import Dict, Tuple
 
 import config
 import notifier
-from scraper import (Fetcher, Product, discover_categories, enrich,
-                     resolve_categories, scrape_category)
+from scraper import (GONE, UNCHANGED, Fetcher, Product, discover_categories,
+                     enrich, resolve_categories, scrape_category)
 from store import Store
 
 log = logging.getLogger("monitor")
@@ -43,12 +43,37 @@ def _handle_signal(signum, _frame):
     _running = False
 
 
-def collect(fetcher: Fetcher, categories) -> Tuple[Dict[str, Product], int]:
-    """Scrape every category. Returns (products by pid, count of failed categories)."""
+def _product_from_record(pid: str, record) -> Product:
+    return Product(
+        pid=pid, url=record["url"], category=record["category"],
+        name=record["name"], price=record["price"], image=record["image"],
+        in_stock=bool(record["in_stock"]),
+    )
+
+
+def collect(fetcher: Fetcher, categories, store=None) -> Tuple[Dict[str, Product], int]:
+    """Scrape every category. Returns (products by pid, count of failed categories).
+
+    A 304 replays that section's known products from state - nothing changed
+    there, so what we saw last time is still what is on the page. Treating 304
+    as empty made a quiet cycle look identical to a total parse failure.
+    A 404 means the path is not a section, which is not a failure either.
+    """
     seen: Dict[str, Product] = {}
     failures = 0
+    known_by_category = {}
+    if store is not None:
+        for pid, record in store.iter_products():
+            known_by_category.setdefault(record["category"], {})[pid] = record
+
     for category in categories:
         result = scrape_category(fetcher, category)
+        if result is UNCHANGED:
+            for pid, record in known_by_category.get(category, {}).items():
+                seen.setdefault(pid, _product_from_record(pid, record))
+            continue
+        if result is GONE:
+            continue
         if result is None:
             failures += 1
             continue
@@ -77,7 +102,7 @@ def run_cycle(store: Store, fetcher: Fetcher, notify: bool = True) -> dict:
     for category in categories:
         store.add_category(category)
 
-    products, failures = collect(fetcher, categories)
+    products, failures = collect(fetcher, categories, store)
     log.info(
         "cycle: %d categories (%d failed), %d products on site, %d known",
         len(categories), failures, len(products), store.product_count(),
@@ -307,7 +332,7 @@ def main() -> int:
         print(f"\nDiscovered from nav + sitemap: {discovered or '(nothing - suspicious)'}")
         categories = resolve_categories(fetcher)
         print(f"Resolved {len(categories)} categories: {', '.join(categories)}\n")
-        products, failures = collect(fetcher, categories)
+        products, failures = collect(fetcher, categories, store)
         print(f"Parsed {len(products)} products ({failures} categories failed)\n")
 
         if not products or not discovered:
@@ -365,6 +390,7 @@ def main() -> int:
 
     while _running:
         started = time.time()
+        result = {}
         try:
             result = run_cycle(store, fetcher)
             if result.get("error"):
@@ -376,9 +402,14 @@ def main() -> int:
                 maybe_heartbeat(store)
         except Exception as exc:
             log.exception("unhandled error in cycle")
+            result = {"error": "unhandled-exception"}
             record_failure(store, "unhandled-exception", str(exc)[:300])
 
         if args.once:
+            if isinstance(result, dict) and result.get("error"):
+                log.error("cycle reported %s - exiting non-zero so CI shows red", result["error"])
+                store.close()
+                return 1
             break
 
         elapsed = time.time() - started

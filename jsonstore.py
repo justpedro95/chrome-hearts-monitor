@@ -36,6 +36,8 @@ class JsonStore:
         return self.data["meta"].get(key, default)
 
     def set_meta(self, key: str, value) -> None:
+        if self.data["meta"].get(key) == str(value):
+            return
         self.data["meta"][key] = str(value)
         self.dirty = True
 
@@ -49,6 +51,10 @@ class JsonStore:
     def product_count(self) -> int:
         return len(self.data["products"])
 
+    def iter_products(self):
+        for pid, record in self.data["products"].items():
+            yield pid, record
+
     def upsert(self, product) -> None:
         now = time.time()
         existing = self.data["products"].get(product.pid, {})
@@ -60,9 +66,15 @@ class JsonStore:
             "image": product.image or existing.get("image"),
             "in_stock": 1 if product.in_stock else 0,
             "first_seen": existing.get("first_seen", now),
-            "last_seen": now,
+            "last_seen": existing.get("last_seen", now),
         }
-        if existing != record:
+        # last_seen only moves on a REAL change. Stamping it every cycle
+        # rewrote state on every run - 288 commits a day, each one a chance
+        # for two runs to collide on the push and fail the workflow.
+        comparable = {k: v for k, v in record.items() if k != "last_seen"}
+        previous = {k: v for k, v in existing.items() if k != "last_seen"}
+        if previous != comparable:
+            record["last_seen"] = now
             self.dirty = True
         self.data["products"][product.pid] = record
 
@@ -80,12 +92,15 @@ class JsonStore:
         return dict(self.data.get("http_cache", {}))
 
     def save_etags(self, cache: Dict[str, dict]) -> None:
-        self.data["http_cache"] = cache
-        self.dirty = True
+        if self.data.get("http_cache") != cache:
+            self.data["http_cache"] = cache
+            self.dirty = True
         self.commit()
 
     # --- persistence --------------------------------------------------------
     def commit(self) -> None:
+        if not self.dirty and os.path.exists(self.path):
+            return
         parent = os.path.dirname(os.path.abspath(self.path))
         if parent:
             os.makedirs(parent, exist_ok=True)
@@ -96,6 +111,7 @@ class JsonStore:
             json.dump(payload, handle, indent=1, sort_keys=True)
             handle.write("\n")
         os.replace(tmp, self.path)
+        self.dirty = False
 
     def close(self) -> None:
         self.commit()

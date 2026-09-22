@@ -34,9 +34,39 @@ import config
 log = logging.getLogger("scraper")
 
 # /<category>/<slug>/<PRODUCTID>.html  e.g. /scents/22-eau-de-parfum/162006CRYXXX271.html
+# Product URLs appear in TWO shapes on this storefront:
+#   /scents/22-eau-de-parfum/162006CRYXXX271.html   (section/slug/id)
+#   /black-sweatpants/190372BLKXXX01W.html          (slug/id)
+# The id is an uppercase alphanumeric SKU containing at least one digit - that
+# is what separates a product from an editorial page like /magazine.html.
 PRODUCT_PATH_RE = re.compile(
-    r"^/(?P<cat>[a-z0-9][a-z0-9\-]*)/(?P<slug>[a-z0-9][a-z0-9\-_]*)/(?P<pid>[A-Za-z0-9_.\-]{5,40})\.html$"
+    r"^/(?P<path>[a-z0-9][a-z0-9\-_]*(?:/[a-z0-9][a-z0-9\-_]*)?)/(?P<pid>[A-Z0-9]{6,32})\.html$"
 )
+PRODUCT_HREF_RE = re.compile(
+    r"\"(/[a-z0-9][a-z0-9\-_]*(?:/[a-z0-9][a-z0-9\-_]*)?/[A-Z0-9]{6,32}\.html)\""
+)
+# New sections are linked from the nav by their un-aliased storefront URL, e.g.
+#   /on/demandware.store/Sites-ChromeHearts-Site/en_US/Search-Show?cgid=SWEATPANTS
+# robots.txt disallows that form, so we derive the public alias (/sweatpants)
+# and request that instead - the disallowed URL is never fetched.
+CGID_RE = re.compile(r"[?&]cgid=([A-Za-z0-9_\-]+)", re.I)
+
+
+def is_product_id(pid):
+    return bool(pid) and pid.isupper() and any(c.isdigit() for c in pid)
+
+
+def match_product_path(path):
+    match = PRODUCT_PATH_RE.match(path or "")
+    return match if match and is_product_id(match.group("pid")) else None
+
+
+def category_from_cgid(href):
+    found = CGID_RE.search(href or "")
+    if not found:
+        return None
+    slug = found.group(1).strip().lower().replace("_", "-")
+    return "/" + slug if slug else None
 PRICE_RE = re.compile(r"(?:US)?\$\s?([0-9][0-9,]*(?:\.[0-9]{2})?)")
 SOLD_OUT_RE = re.compile(r"sold\s*out|out\s*of\s*stock|unavailable", re.I)
 
@@ -130,7 +160,7 @@ class Fetcher:
                     "bytes": len(resp.content),
                     "chars": len(body),
                     "looks_like_html": "<html" in body[:4000].lower(),
-                    "product_href_count": len(re.findall(r"/[a-z0-9\-]+/[a-z0-9\-_]+/[A-Za-z0-9_.\-]{5,40}\.html", body)),
+                    "product_href_count": len(PRODUCT_HREF_RE.findall(body)),
                     "snippet": body[:300].replace("\n", " "),
                     "final_url": resp.url,
                 }
@@ -196,6 +226,12 @@ def discover_categories(fetcher: Fetcher) -> List[str]:
     if status == 200 and html:
         soup = BeautifulSoup(html, "lxml")
         for a in soup.find_all("a", href=True):
+            # A cgid nav link carries the section in its QUERY STRING, which
+            # _normalise_path discards - read it before normalising.
+            aliased = category_from_cgid(a["href"])
+            if aliased and aliased.lstrip("/") not in NON_CATEGORY:
+                found.add(aliased)
+
             path = _normalise_path(a["href"])
             if not path or path == "/":
                 continue
@@ -309,7 +345,7 @@ def parse_products(html: str, category: str) -> Dict[str, Product]:
         path = _normalise_path(anchor["href"])
         if not path:
             continue
-        match = PRODUCT_PATH_RE.match(path)
+        match = match_product_path(path)
         if not match:
             continue
         pid = match.group("pid")
@@ -331,8 +367,8 @@ def parse_products(html: str, category: str) -> Dict[str, Product]:
 
     if not products:
         # Fallback: some renders put the link in JS/JSON rather than an <a href>.
-        for path in set(re.findall(r'"(/[a-z0-9][a-z0-9\-]*/[a-z0-9\-_]+/[A-Za-z0-9_.\-]{5,40}\.html)"', html)):
-            match = PRODUCT_PATH_RE.match(path)
+        for path in set(PRODUCT_HREF_RE.findall(html)):
+            match = match_product_path(path)
             if match:
                 pid = match.group("pid")
                 products.setdefault(
@@ -425,12 +461,25 @@ def enrich(product: Product, fetcher: Fetcher) -> Product:
     return product
 
 
-def scrape_category(fetcher: Fetcher, category: str) -> Optional[Dict[str, Product]]:
-    """None means 'no usable response' (network error / blocked) - do NOT treat as empty."""
+#: 304 Not Modified - nothing changed there. NOT the same as an empty page.
+UNCHANGED = object()
+#: 404 - the path is not a section at all. NOT the same as a failed fetch.
+GONE = object()
+
+
+def scrape_category(fetcher: Fetcher, category: str):
+    """Products, or UNCHANGED (304), or GONE (404), or None (fetch failed).
+
+    These four MUST stay distinct. Collapsing any of them together is how a
+    healthy cycle ends up indistinguishable from a broken one.
+    """
     url = config.BASE_URL + category
     status, html = fetcher.get(url)
     if status == 304:
-        return {}
+        return UNCHANGED
+    if status == 404:
+        log.info("category %s is 404 - not a section", category)
+        return GONE
     if status != 200 or not html:
         log.warning("category %s returned %s", category, status)
         return None

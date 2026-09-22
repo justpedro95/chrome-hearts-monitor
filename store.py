@@ -71,6 +71,10 @@ class Store:
     def product_count(self) -> int:
         return self.conn.execute("SELECT COUNT(*) AS n FROM products").fetchone()["n"]
 
+    def iter_products(self):
+        for row in self.conn.execute("SELECT * FROM products"):
+            yield row["pid"], dict(row)
+
     def upsert(self, product) -> None:
         now = time.time()
         self.conn.execute(
