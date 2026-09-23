@@ -9,6 +9,7 @@
   "/shirt": 1787608457.3965034,
   "/shop": 1787608457.396504,
   "/socks": 1787608457.3965042,
+  "/sweatpants": 1790123230.603352,
   "/underwear": 1787608457.3965044
  },
  "http_cache": {
@@ -48,16 +49,22 @@
    "etag": null,
    "last_modified": null
   },
+  "https://www.chromehearts.com/sweatpants": {
+   "etag": null,
+   "last_modified": null
+  },
   "https://www.chromehearts.com/underwear": {
    "etag": null,
    "last_modified": null
   }
  },
  "meta": {
+  "category_peaks": "{\"/baccarat\": 10, \"/boxers-leggings\": 6, \"/intimates\": 6, \"/scents\": 12, \"/socks\": 6, \"/sweatpants\": 1, \"/underwear\": 6}",
   "consecutive_failures": "0",
+  "emptied_sections": "[]",
   "failure_alerted": "0",
   "last_heartbeat": "1790093920.7736049",
-  "last_new_product_at": "1789064063.3134956",
+  "last_new_product_at": "1790123248.158881",
   "seeded": "1"
  },
  "products": {
@@ -411,6 +418,16 @@
    "price": "$255",
    "url": "https://www.chromehearts.com/socks/foti-socks/180459XXXXXX389.html"
   },
+  "190372BLKXXX01W": {
+   "category": "/sweatpants",
+   "first_seen": 1790123248.998924,
+   "image": null,
+   "in_stock": 1,
+   "last_seen": 1790123248.998924,
+   "name": "BLACK SWEATPANTS",
+   "price": "$730",
+   "url": "https://www.chromehearts.com/black-sweatpants/190372BLKXXX01W.html"
+  },
   "191715D5DXXX408": {
    "category": "/socks",
    "first_seen": 1787608474.4827101,
@@ -572,6 +589,6 @@
    "url": "https://www.chromehearts.com/scarf/double-peony-scarf/218126MABXXX00D.html"
   }
  },
- "updated_at": "2026-09-23T00:06:07Z",
+ "updated_at": "2026-09-23T00:27:28Z",
  "version": 1
 }
