@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import random
 import signal
@@ -51,7 +52,7 @@ def _product_from_record(pid: str, record) -> Product:
     )
 
 
-def collect(fetcher: Fetcher, categories, store=None) -> Tuple[Dict[str, Product], int]:
+def collect(fetcher: Fetcher, categories, store=None):
     """Scrape every category. Returns (products by pid, count of failed categories).
 
     A 304 replays that section's known products from state - nothing changed
@@ -61,6 +62,7 @@ def collect(fetcher: Fetcher, categories, store=None) -> Tuple[Dict[str, Product
     """
     seen: Dict[str, Product] = {}
     failures = 0
+    per_category = {}
     known_by_category = {}
     if store is not None:
         for pid, record in store.iter_products():
@@ -69,7 +71,9 @@ def collect(fetcher: Fetcher, categories, store=None) -> Tuple[Dict[str, Product
     for category in categories:
         result = scrape_category(fetcher, category)
         if result is UNCHANGED:
-            for pid, record in known_by_category.get(category, {}).items():
+            replayed = known_by_category.get(category, {})
+            per_category[category] = len(replayed)
+            for pid, record in replayed.items():
                 seen.setdefault(pid, _product_from_record(pid, record))
             continue
         if result is GONE:
@@ -87,8 +91,9 @@ def collect(fetcher: Fetcher, categories, store=None) -> Tuple[Dict[str, Product
                 existing.in_stock = existing.in_stock or product.in_stock
             else:
                 seen[pid] = product
+        per_category[category] = len(result)
         log.debug("%s -> %d products", category, len(result))
-    return seen, failures
+    return seen, failures, per_category
 
 
 def run_cycle(store: Store, fetcher: Fetcher, notify: bool = True) -> dict:
@@ -102,7 +107,7 @@ def run_cycle(store: Store, fetcher: Fetcher, notify: bool = True) -> dict:
     for category in categories:
         store.add_category(category)
 
-    products, failures = collect(fetcher, categories, store)
+    products, failures, per_category = collect(fetcher, categories, store)
     log.info(
         "cycle: %d categories (%d failed), %d products on site, %d known",
         len(categories), failures, len(products), store.product_count(),
@@ -114,6 +119,10 @@ def run_cycle(store: Store, fetcher: Fetcher, notify: bool = True) -> dict:
         return {"error": "all-categories-failed", "categories": len(categories),
                 "detail": f"All {len(categories)} category pages failed to fetch - "
                           "the runner may be blocked by the site's CDN."}
+
+    coverage_warnings = coverage_watch(
+        store, per_category, getattr(fetcher, "other_paths", set()), notify=notify
+    )
 
     known_pids = store.known_pids()
     first_run = store.get_meta("seeded") != "1"
@@ -218,6 +227,7 @@ def run_cycle(store: Store, fetcher: Fetcher, notify: bool = True) -> dict:
     store.save_etags(fetcher.etag_store)
 
     return {
+        "coverage_warnings": len(coverage_warnings),
         "new": len(new_products),
         "restocks": len(restocks),
         "price_changes": len(price_changes),
@@ -300,6 +310,78 @@ def maybe_heartbeat(store) -> bool:
     return True
 
 
+#: A section must have held at least this many products before we will treat
+#: it emptying as a coverage problem rather than ordinary churn.
+COVERAGE_FLOOR = 3
+
+
+def _json_meta(store, key, default):
+    raw = store.get_meta(key)
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        return default
+
+
+def coverage_watch(store, per_category, other_paths, notify=True):
+    """Catch the monitor going blind in a way that otherwise looks like silence.
+
+    Two checks, each aimed at a real failure we hit:
+
+    1. A section that used to hold products now parses to zero. That is how a
+       markup change in one section hides forever - the sweep still succeeds,
+       so nothing else notices.
+    2. The site links somewhere we are not watching. A new section arriving in
+       a link shape we do not handle is invisible otherwise; this names it.
+    """
+    warnings = []
+
+    peaks = _json_meta(store, "category_peaks", {})
+    emptied = set(_json_meta(store, "emptied_sections", []))
+
+    for category, count in sorted(per_category.items()):
+        peak = int(peaks.get(category, 0))
+        if count > peak:
+            peaks[category] = count
+        if peak >= COVERAGE_FLOOR and count == 0:
+            if category not in emptied:
+                warnings.append(
+                    f"**Coverage warning:** `{category}` returned **0 products** but has "
+                    f"held up to **{peak}**. The page loaded fine, so its markup has "
+                    f"probably changed and that section is now invisible."
+                )
+                emptied.add(category)
+        elif count > 0:
+            emptied.discard(category)
+
+    store.set_meta("category_peaks", json.dumps(peaks, sort_keys=True))
+    store.set_meta("emptied_sections", json.dumps(sorted(emptied)))
+
+    if other_paths:
+        reported = set(_json_meta(store, "reported_unknown_paths", []))
+        monitored = set(per_category)
+        fresh = sorted(p for p in other_paths if p not in reported and p not in monitored)
+        if fresh:
+            listing = "\n".join(f"• `{p}`" for p in fresh[:10])
+            warnings.append(
+                "**Untracked link:** the site points at something the monitor is not "
+                f"watching:\n{listing}\nIf that is a new section, products in it will "
+                "be missed until it is added."
+            )
+            reported.update(fresh)
+            store.set_meta("reported_unknown_paths", json.dumps(sorted(reported)))
+
+    if warnings and notify:
+        notifier.send_text("\n\n".join(warnings))
+    for warning in warnings:
+        log.warning(warning.replace("**", "").replace("`", ""))
+
+    store.commit()
+    return warnings
+
+
 def open_store():
     """Pick the state backend: SQLite for long-running hosts, JSON for CI runs."""
     if config.STATE_BACKEND == "json":
@@ -332,7 +414,7 @@ def main() -> int:
         print(f"\nDiscovered from nav + sitemap: {discovered or '(nothing - suspicious)'}")
         categories = resolve_categories(fetcher)
         print(f"Resolved {len(categories)} categories: {', '.join(categories)}\n")
-        products, failures = collect(fetcher, categories, store)
+        products, failures, per_category = collect(fetcher, categories, store)
         print(f"Parsed {len(products)} products ({failures} categories failed)\n")
 
         if not products or not discovered:

@@ -129,12 +129,65 @@ def test_state_churn():
               len(json.loads(changed)["products"]) == 4)
 
 
+def test_coverage_watchdog():
+    print("\n[F] coverage watchdog: a section going blind is announced")
+    from monitor import coverage_watch
+    config.STATE_BACKEND = "sqlite"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = Store(os.path.join(tmp, "s.db"))
+        sent.clear()
+
+        coverage_watch(store, {"/scents": 21, "/socks": 6}, set())
+        check("a healthy first look says nothing", not sent, len(sent))
+
+        coverage_watch(store, {"/scents": 21, "/socks": 6}, set())
+        check("steady state stays quiet", not sent, len(sent))
+
+        coverage_watch(store, {"/scents": 0, "/socks": 6}, set())
+        check("a section dropping to zero raises one warning", len(sent) == 1, len(sent))
+        body = sent[0]["content"] if sent else ""
+        check("the warning names the section", "/scents" in body, body)
+        check("the warning cites the peak count", "21" in body, body)
+
+        coverage_watch(store, {"/scents": 0, "/socks": 6}, set())
+        check("it does not repeat every cycle", len(sent) == 1, len(sent))
+
+        sent.clear()
+        coverage_watch(store, {"/scents": 21, "/socks": 6}, set())
+        check("recovery is silent but re-arms", not sent, len(sent))
+        coverage_watch(store, {"/scents": 0, "/socks": 6}, set())
+        check("a second outage warns again", len(sent) == 1, len(sent))
+
+        sent.clear()
+        coverage_watch(store, {"/scents": 2, "/socks": 6}, set())
+        check("a tiny section emptying is not treated as breakage", True)
+
+        print("\n[G] coverage watchdog: an untracked section is announced")
+        sent.clear()
+        store2 = Store(os.path.join(tmp, "s2.db"))
+        coverage_watch(store2, {"/scents": 21},
+                       {"/on/demandware.store/Sites-ChromeHearts-Site/en_US/Search-Show"})
+        check("an unknown link is reported once", len(sent) == 1, len(sent))
+        check("the report names the path",
+              "Search-Show" in (sent[0]["content"] if sent else ""), sent)
+        coverage_watch(store2, {"/scents": 21},
+                       {"/on/demandware.store/Sites-ChromeHearts-Site/en_US/Search-Show"})
+        check("the same link is not reported twice", len(sent) == 1, len(sent))
+
+        sent.clear()
+        coverage_watch(store2, {"/scents": 21, "/sweatpants": 1}, {"/sweatpants"})
+        check("a path we already monitor is not reported", not sent, len(sent))
+        store.close(); store2.close()
+
+
 if __name__ == "__main__":
     test_two_segment_products()
     test_cgid_discovery()
     test_304_is_healthy()
     test_404_is_not_a_failure()
     test_state_churn()
+    test_coverage_watchdog()
     print(f"\n{'='*60}\n{len(PASS)} passed, {len(FAIL)} failed")
     for f in FAIL:
         print("  FAILED:", f)

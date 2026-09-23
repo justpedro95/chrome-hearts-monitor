@@ -221,6 +221,7 @@ def discover_categories(fetcher: Fetcher) -> List[str]:
     drop, it shows up in the nav before any product in it is known to us.
     """
     found = set()
+    other = set()
 
     status, html = fetcher.get(config.BASE_URL + "/", use_cache=False)
     if status == 200 and html:
@@ -231,12 +232,21 @@ def discover_categories(fetcher: Fetcher) -> List[str]:
             aliased = category_from_cgid(a["href"])
             if aliased and aliased.lstrip("/") not in NON_CATEGORY:
                 found.add(aliased)
+                # Resolved - do not also report its raw storefront URL as an
+                # untracked link, or the watchdog cries wolf every cycle.
+                continue
 
             path = _normalise_path(a["href"])
             if not path or path == "/":
                 continue
             parts = [p for p in path.split("/") if p]
             if len(parts) != 1:
+                # Not a plain section path. Keep it as "something the site
+                # links to that we do not understand" so the coverage watchdog
+                # can surface it - this is how a /sweatpants-shaped section
+                # gets noticed even if its link form is one we never handled.
+                if not path.endswith(".html") and not match_product_path(path):
+                    other.add(path)
                 continue
             seg = parts[0]
             if seg.endswith(".html") or seg in NON_CATEGORY:
@@ -255,6 +265,7 @@ def discover_categories(fetcher: Fetcher) -> List[str]:
             if len(parts) == 1 and not parts[0].endswith(".html") and parts[0] not in NON_CATEGORY:
                 found.add("/" + parts[0])
 
+    fetcher.other_paths = other
     return sorted(found)
 
 

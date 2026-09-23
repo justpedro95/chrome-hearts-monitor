@@ -73,6 +73,18 @@ product count and how long since the last new product, so a long quiet stretch
 is distinguishable from a monitor that quietly died. Change the cadence with a
 `HEARTBEAT_HOURS` repository variable, or set it to `0` to turn it off.
 
+**It watches its own coverage.** Two checks run every cycle, because the worst
+failure mode here is going blind in a way that looks exactly like a quiet week:
+
+- A section that has previously held products parses to **zero** while the page
+  still loads fine → you get a warning naming the section and its peak count.
+  That is what a markup change in one section looks like.
+- The site links somewhere the monitor is **not watching** → you get the path.
+  A new section arriving in a link shape the code does not handle is otherwise
+  invisible; this names it so it can be added.
+
+Each fires once, not every cycle, and re-arms after recovery.
+
 **It reports its own health to Discord.** You never need to open the Actions
 logs to know whether it's working. If it fetches pages but parses nothing, gets
 blocked by the CDN, or fails repeatedly, it says so in the same channel as the
