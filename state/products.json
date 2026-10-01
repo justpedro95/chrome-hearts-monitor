@@ -59,7 +59,7 @@
   }
  },
  "meta": {
-  "category_peaks": "{\"/baccarat\": 10, \"/boxers-leggings\": 6, \"/intimates\": 6, \"/scents\": 12, \"/socks\": 6, \"/sweatpants\": 1, \"/underwear\": 6}",
+  "category_peaks": "{\"/baccarat\": 10, \"/boxers-leggings\": 6, \"/intimates\": 6, \"/scents\": 21, \"/socks\": 6, \"/sweatpants\": 1, \"/underwear\": 6}",
   "consecutive_failures": "0",
   "emptied_sections": "[]",
   "failure_alerted": "0",
@@ -91,9 +91,9 @@
   "146053XXXXXX00R": {
    "category": "/scents",
    "first_seen": 1787608474.4826887,
-   "image": "https://www.chromehearts.com/dw/image/v2/BFBV_PRD/on/demandware.static/-/Sites-ch-master-catalog/default/dw15925e5b/img_products/hi-res/146053XXXXXX142_1.png?sw=800&sh=1000",
+   "image": "https://www.chromehearts.com/dw/image/v2/bfbv_prd/on/demandware.static/-/Sites-ch-master-catalog/default/dw15925e5b/img_products/hi-res/146053XXXXXX142_1.png?sw=800&sh=1000",
    "in_stock": 1,
-   "last_seen": 1788984023.7534037,
+   "last_seen": 1790896094.4649165,
    "name": "+22+ Incense Set with Holder",
    "price": "$200",
    "url": "https://www.chromehearts.com/scents/22-incense-set-with-holder/146053XXXXXX00R.html"
@@ -101,9 +101,9 @@
   "146053XXXXXX142": {
    "category": "/scents",
    "first_seen": 1787608474.4826846,
-   "image": "https://www.chromehearts.com/dw/image/v2/BFBV_PRD/on/demandware.static/-/Sites-ch-master-catalog/default/dw15925e5b/img_products/hi-res/146053XXXXXX142_1.png?sw=800&sh=1000",
+   "image": "https://www.chromehearts.com/dw/image/v2/bfbv_prd/on/demandware.static/-/Sites-ch-master-catalog/default/dw15925e5b/img_products/hi-res/146053XXXXXX142_1.png?sw=800&sh=1000",
    "in_stock": 1,
-   "last_seen": 1788984023.7534015,
+   "last_seen": 1790896094.4649115,
    "name": "+33+ Incense Set with Holder",
    "price": "$200",
    "url": "https://www.chromehearts.com/scents/33-incense-set-with-holder/146053XXXXXX142.html"
@@ -111,9 +111,9 @@
   "148310SLVXXX186": {
    "category": "/scents",
    "first_seen": 1787608474.4827,
-   "image": "https://www.chromehearts.com/dw/image/v2/BFBV_PRD/on/demandware.static/-/Sites-ch-master-catalog/default/dw9d7b3726/img_products/hi-res/148310SLVXXX186_1.png?sw=800&sh=1000",
+   "image": "https://www.chromehearts.com/dw/image/v2/bfbv_prd/on/demandware.static/-/Sites-ch-master-catalog/default/dw9d7b3726/img_products/hi-res/148310SLVXXX186_1.png?sw=800&sh=1000",
    "in_stock": 0,
-   "last_seen": 1788984023.7534094,
+   "last_seen": 1790896094.4649282,
    "name": "Matchstick Holder",
    "price": "$1,500",
    "url": "https://www.chromehearts.com/scents/matchstick-holder/148310SLVXXX186.html"
@@ -121,9 +121,9 @@
   "151407XXXXXX00S": {
    "category": "/scents",
    "first_seen": 1787608474.482691,
-   "image": "https://www.chromehearts.com/dw/image/v2/BFBV_PRD/on/demandware.static/-/Sites-ch-master-catalog/default/dw64d9efff/img_products/hi-res/151407XXXXXX169_1.png?sw=800&sh=1000",
+   "image": "https://www.chromehearts.com/dw/image/v2/bfbv_prd/on/demandware.static/-/Sites-ch-master-catalog/default/dw64d9efff/img_products/hi-res/151407XXXXXX169_1.png?sw=800&sh=1000",
    "in_stock": 1,
-   "last_seen": 1788984023.7534046,
+   "last_seen": 1790896094.4649186,
    "name": "+22+ Incense Refill",
    "price": "$100",
    "url": "https://www.chromehearts.com/scents/22-incense-refill/151407XXXXXX00S.html"
@@ -131,9 +131,9 @@
   "151407XXXXXX169": {
    "category": "/scents",
    "first_seen": 1787608474.4826863,
-   "image": "https://www.chromehearts.com/dw/image/v2/BFBV_PRD/on/demandware.static/-/Sites-ch-master-catalog/default/dw64d9efff/img_products/hi-res/151407XXXXXX169_1.png?sw=800&sh=1000",
+   "image": "https://www.chromehearts.com/dw/image/v2/bfbv_prd/on/demandware.static/-/Sites-ch-master-catalog/default/dw64d9efff/img_products/hi-res/151407XXXXXX169_1.png?sw=800&sh=1000",
    "in_stock": 1,
-   "last_seen": 1788984023.7534027,
+   "last_seen": 1790896094.4649138,
    "name": "+33+ Incense Refill",
    "price": "$100",
    "url": "https://www.chromehearts.com/scents/33-incense-refill/151407XXXXXX169.html"
@@ -531,9 +531,9 @@
   "208531BLUXXX752": {
    "category": "/scents",
    "first_seen": 1787608474.4826946,
-   "image": "https://www.chromehearts.com/dw/image/v2/BFBV_PRD/on/demandware.static/-/Sites-ch-master-catalog/default/dw85653ba2/img_products/hi-res/511208531BLUXXX752_2431.png?sw=800&sh=1000",
+   "image": "https://www.chromehearts.com/dw/image/v2/bfbv_prd/on/demandware.static/-/Sites-ch-master-catalog/default/dw85653ba2/img_products/hi-res/511208531BLUXXX752_2431.png?sw=800&sh=1000",
    "in_stock": 1,
-   "last_seen": 1788984023.7534065,
+   "last_seen": 1790896094.4649224,
    "name": "+33+ Perfumed Hand Spray",
    "price": "$110",
    "url": "https://www.chromehearts.com/scents/33-perfumed-hand-spray/208531BLUXXX752.html"
@@ -541,9 +541,9 @@
   "208531PNKXXX751": {
    "category": "/scents",
    "first_seen": 1787608474.482693,
-   "image": "https://www.chromehearts.com/dw/image/v2/BFBV_PRD/on/demandware.static/-/Sites-ch-master-catalog/default/dwd89c28bc/img_products/hi-res/511208531PNKXXX751_0287.png?sw=800&sh=1000",
+   "image": "https://www.chromehearts.com/dw/image/v2/bfbv_prd/on/demandware.static/-/Sites-ch-master-catalog/default/dwd89c28bc/img_products/hi-res/511208531PNKXXX751_0287.png?sw=800&sh=1000",
    "in_stock": 1,
-   "last_seen": 1788984023.7534058,
+   "last_seen": 1790896094.4649205,
    "name": "+22+ Perfumed Hand Spray",
    "price": "$110",
    "url": "https://www.chromehearts.com/scents/22-perfumed-hand-spray/208531PNKXXX751.html"
@@ -561,9 +561,9 @@
   "214141D7BXXX01S": {
    "category": "/scents",
    "first_seen": 1787608474.4826982,
-   "image": "https://www.chromehearts.com/dw/image/v2/BFBV_PRD/on/demandware.static/-/Sites-ch-master-catalog/default/dwf83d7130/img_products/hi-res/511214141D7BXXX01S_0475-2.png?sw=800&sh=1000",
+   "image": "https://www.chromehearts.com/dw/image/v2/bfbv_prd/on/demandware.static/-/Sites-ch-master-catalog/default/dwf83d7130/img_products/hi-res/511214141D7BXXX01S_0475-2.png?sw=800&sh=1000",
    "in_stock": 0,
-   "last_seen": 1788984023.7534084,
+   "last_seen": 1790896094.4649265,
    "name": "+22+ Scented Candle Set 35G",
    "price": "$150",
    "url": "https://www.chromehearts.com/scents/22-scented-candle-set-35g/214141D7BXXX01S.html"
@@ -571,9 +571,9 @@
   "214141D7BXXX01T": {
    "category": "/scents",
    "first_seen": 1787608474.4826965,
-   "image": "https://www.chromehearts.com/dw/image/v2/BFBV_PRD/on/demandware.static/-/Sites-ch-master-catalog/default/dw59422a4a/img_products/hi-res/511214141D7BXXX01T_0475-2.png?sw=800&sh=1000",
+   "image": "https://www.chromehearts.com/dw/image/v2/bfbv_prd/on/demandware.static/-/Sites-ch-master-catalog/default/dw59422a4a/img_products/hi-res/511214141D7BXXX01T_0475-2.png?sw=800&sh=1000",
    "in_stock": 0,
-   "last_seen": 1788984023.7534075,
+   "last_seen": 1790896094.4649243,
    "name": "+33+ Scented Candle Set 35G",
    "price": "$150",
    "url": "https://www.chromehearts.com/scents/33-scented-candle-set-35g/214141D7BXXX01T.html"
@@ -589,6 +589,6 @@
    "url": "https://www.chromehearts.com/scarf/double-peony-scarf/218126MABXXX00D.html"
   }
  },
- "updated_at": "2026-10-01T13:47:53Z",
+ "updated_at": "2026-10-01T23:08:14Z",
  "version": 1
 }
