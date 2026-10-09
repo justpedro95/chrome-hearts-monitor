@@ -63,7 +63,7 @@
   "consecutive_failures": "0",
   "emptied_sections": "[]",
   "failure_alerted": "0",
-  "last_heartbeat": "1791527711.886657",
+  "last_heartbeat": "1791572504.735516",
   "last_new_product_at": "1790123248.158881",
   "seeded": "1"
  },
@@ -312,8 +312,8 @@
    "category": "/socks",
    "first_seen": 1787608474.4827077,
    "image": "https://www.chromehearts.com/dw/image/v2/bfbv_prd/on/demandware.static/-/Sites-ch-master-catalog/default/dw35e5a211/img_products/hi-res/316176354MB3MED465_1.png?sw=800&sh=1000",
-   "in_stock": 0,
-   "last_seen": 1790970543.0292284,
+   "in_stock": 1,
+   "last_seen": 1791572504.7344105,
    "name": "STENCIL SOCKS",
    "price": "$255",
    "url": "https://www.chromehearts.com/socks/stencil-socks/176354MB3XXX465.html"
@@ -589,6 +589,6 @@
    "url": "https://www.chromehearts.com/scarf/double-peony-scarf/218126MABXXX00D.html"
   }
  },
- "updated_at": "2026-10-09T06:35:12Z",
+ "updated_at": "2026-10-09T19:01:45Z",
  "version": 1
 }
