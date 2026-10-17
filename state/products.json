@@ -63,7 +63,7 @@
   "consecutive_failures": "0",
   "emptied_sections": "[]",
   "failure_alerted": "0",
-  "last_heartbeat": "1792162880.118126",
+  "last_heartbeat": "1792207517.8239667",
   "last_new_product_at": "1790123248.158881",
   "seeded": "1"
  },
@@ -352,8 +352,8 @@
    "category": "/baccarat",
    "first_seen": 1787608474.4826417,
    "image": "https://www.chromehearts.com/dw/image/v2/bfbv_prd/on/demandware.static/-/Sites-ch-master-catalog/default/dwb01f7240/img_products/hi-res/503177731CRYXXX042_0661.png?sw=800&sh=1000",
-   "in_stock": 1,
-   "last_seen": 1790970543.0291069,
+   "in_stock": 0,
+   "last_seen": 1792207517.8227031,
    "name": "CHAMPAGNE FLUTE",
    "price": "$2,800",
    "url": "https://www.chromehearts.com/baccarat/champagne-flute/177731CRYXXX042.html"
@@ -589,6 +589,6 @@
    "url": "https://www.chromehearts.com/scarf/double-peony-scarf/218126MABXXX00D.html"
   }
  },
- "updated_at": "2026-10-16T15:01:20Z",
+ "updated_at": "2026-10-17T03:25:18Z",
  "version": 1
 }
