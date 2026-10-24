@@ -73,6 +73,25 @@ product count and how long since the last new product, so a long quiet stretch
 is distinguishable from a monitor that quietly died. Change the cadence with a
 `HEARTBEAT_HOURS` repository variable, or set it to `0` to turn it off.
 
+**A new category is the headline alert.** This storefront announces a drop by
+creating a category for it, linking it from one place, and removing it later.
+So sections are discovered from the nav, the sitemap (including the un-aliased
+`Search-Show?cgid=` form) **and** every category page the monitor already
+fetches - and the moment a section appears that has never been seen, you get a
+Discord message with its URL, before any product in it has been parsed. Once a
+section is known it is **sticky**: it keeps being polled even after it leaves
+the nav, and is only retired after roughly a day of 404s.
+
+**Non-USD renders are ignored.** Runners occasionally geolocate outside the US
+and the storefront answers in local currency. Those renders are detected and
+their names and prices discarded, so pesos can never overwrite a good USD
+price. Products on them are still detected, so a drop is never missed because
+of where the runner happened to be.
+
+**A failed cycle still saves state**, and only a streak past
+`FAILURE_ALERT_THRESHOLD` fails the job - otherwise the failure counter resets
+every run and the Discord warning can never fire.
+
 **It watches its own coverage.** Two checks run every cycle, because the worst
 failure mode here is going blind in a way that looks exactly like a quiet week:
 
@@ -174,7 +193,7 @@ Everything is set in `.env`.
 | `ALERT_NEW_PRODUCTS` | `true` | The core alert. |
 | `ALERT_RESTOCKS` | `false` | Also ping on sold out → in stock. Flip to `true` if you want it. |
 | `ALERT_PRICE_CHANGES` | `false` | Ping when a known product's price moves. |
-| `ALERT_NEW_CATEGORIES` | `false` | Ping when a whole new section appears in the nav. |
+| `ALERT_NEW_CATEGORIES` | `true` | Ping the moment a section appears that has never been seen, with its URL. This is the primary drop signal on this site - leave it on. |
 | `ENRICH_PRODUCTS` | `true` | Open each new product's page for name/price/image. Set `false` for bare-URL alerts about 1s faster. |
 | `CATEGORIES` | *(blank)* | Pin to specific sections, e.g. `/scents,/baccarat`. Blank = seed list + auto-discovery. |
 | `DISCOVER_CATEGORIES` | `true` | Read the nav and sitemap each cycle for new sections. |

@@ -1,7 +1,6 @@
 """SQLite-backed state. Survives container restarts so you never get duplicate alerts."""
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 import time

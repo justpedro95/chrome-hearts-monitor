@@ -63,7 +63,9 @@ class JsonStore:
             "category": product.category or existing.get("category"),
             "name": product.name or existing.get("name"),
             "price": product.price or existing.get("price"),
-            "image": product.image or existing.get("image"),
+            # Keep the first image: the CDN varies the case of a path segment
+            # between runs (BFBV_PRD vs bfbv_prd), which is not a real change.
+            "image": existing.get("image") or product.image,
             "in_stock": 1 if product.in_stock else 0,
             "first_seen": existing.get("first_seen", now),
             "last_seen": existing.get("last_seen", now),

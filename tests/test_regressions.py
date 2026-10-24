@@ -4,7 +4,6 @@ import os
 import pathlib
 import sys
 import tempfile
-import time
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
@@ -181,6 +180,33 @@ def test_coverage_watchdog():
         store.close(); store2.close()
 
 
+def test_localised_currency():
+    print("\n[H] a non-USD render never overwrites good USD data")
+    loc = SWEATS.replace("$730", "Mex$18,500")
+    products = scraper.parse_products(loc, "/sweatpants")
+    check("the product is still detected", "190372BLKXXX01W" in products, sorted(products))
+    item = products.get("190372BLKXXX01W")
+    check("no price taken from a peso page", item and item.price is None, item and item.price)
+    check("no name taken from a peso page", item and item.name is None, item and item.name)
+    check("Canadian render flagged", scraper.page_is_localised(SWEATS.replace("$730", "C$995")))
+    check("a plain USD page is not flagged", not scraper.page_is_localised(SWEATS))
+
+    print("\n[I] upsert keeps known USD values when a cycle supplies none")
+    from jsonstore import JsonStore
+    with tempfile.TemporaryDirectory() as tmp:
+        store = JsonStore(os.path.join(tmp, "s.json"))
+        store.upsert(scraper.Product(pid="X", url="https://x/y/ABC123.html", category="/c",
+                                     name="REAL NAME", price="$730", image="https://img/a.png"))
+        store.commit()
+        store.upsert(scraper.Product(pid="X", url="https://x/y/ABC123.html", category="/c",
+                                     name=None, price=None, image=None))
+        store.commit()
+        rec = store.get_product("X")
+        check("name survives", rec["name"] == "REAL NAME", rec["name"])
+        check("price survives", rec["price"] == "$730", rec["price"])
+        store.close()
+
+
 if __name__ == "__main__":
     test_two_segment_products()
     test_cgid_discovery()
@@ -188,6 +214,7 @@ if __name__ == "__main__":
     test_404_is_not_a_failure()
     test_state_churn()
     test_coverage_watchdog()
+    test_localised_currency()
     print(f"\n{'='*60}\n{len(PASS)} passed, {len(FAIL)} failed")
     for f in FAIL:
         print("  FAILED:", f)

@@ -17,7 +17,7 @@ import random
 import signal
 import sys
 import time
-from typing import Dict, Tuple
+from typing import Dict
 
 import config
 import notifier
@@ -63,6 +63,7 @@ def collect(fetcher: Fetcher, categories, store=None):
     seen: Dict[str, Product] = {}
     failures = 0
     per_category = {}
+    gone = set()
     known_by_category = {}
     if store is not None:
         for pid, record in store.iter_products():
@@ -77,6 +78,7 @@ def collect(fetcher: Fetcher, categories, store=None):
                 seen.setdefault(pid, _product_from_record(pid, record))
             continue
         if result is GONE:
+            gone.add(category)
             continue
         if result is None:
             failures += 1
@@ -93,21 +95,20 @@ def collect(fetcher: Fetcher, categories, store=None):
                 seen[pid] = product
         per_category[category] = len(result)
         log.debug("%s -> %d products", category, len(result))
-    return seen, failures, per_category
+    return seen, failures, per_category, gone
 
 
 def run_cycle(store: Store, fetcher: Fetcher, notify: bool = True) -> dict:
-    categories = resolve_categories(fetcher)
+    categories, brand_new = resolve_tracked_sections(store, fetcher)
     if not categories:
         log.error("no categories resolved - site layout may have changed")
         return {"error": "no-categories"}
 
-    known_categories = store.known_categories()
-    new_categories = [c for c in categories if c not in known_categories]
+    new_categories = announce_sections(store, brand_new, notify=notify)
     for category in categories:
         store.add_category(category)
 
-    products, failures, per_category = collect(fetcher, categories, store)
+    products, failures, per_category, gone = collect(fetcher, categories, store)
     log.info(
         "cycle: %d categories (%d failed), %d products on site, %d known",
         len(categories), failures, len(products), store.product_count(),
@@ -120,11 +121,22 @@ def run_cycle(store: Store, fetcher: Fetcher, notify: bool = True) -> dict:
                 "detail": f"All {len(categories)} category pages failed to fetch - "
                           "the runner may be blocked by the site's CDN."}
 
+    # Sections linked only from another section's page surface here; announce
+    # them now so a new category is known within one cycle, not the next.
+    if not config.CATEGORIES:
+        late = sorted(getattr(fetcher, "found_sections", set())
+                      - set(_json_meta(store, "tracked_sections", []))
+                      - set(_json_meta(store, "retired_sections", [])))
+        new_categories = list(new_categories) + announce_sections(store, late, notify=notify)
+        retire_dead_sections(store, gone, set(per_category))
+        store.set_meta("tracked_sections",
+                       json.dumps(sorted(set(_json_meta(store, "tracked_sections", []))
+                                         | set(categories))))
+
     coverage_warnings = coverage_watch(
         store, per_category, getattr(fetcher, "other_paths", set()), notify=notify
     )
 
-    known_pids = store.known_pids()
     first_run = store.get_meta("seeded") != "1"
 
     # A 200 response we simply failed to parse looks identical to "the store is
@@ -216,10 +228,6 @@ def run_cycle(store: Store, fetcher: Fetcher, notify: bool = True) -> dict:
 
     if notify and embeds:
         notifier.send_embeds(embeds)
-
-    if notify and config.ALERT_NEW_CATEGORIES and new_categories and not first_run:
-        listing = "\n".join(f"• {config.BASE_URL}{c}" for c in new_categories)
-        notifier.send_text(f"New section(s) appeared on the site:\n{listing}")
 
     for product in products.values():
         store.upsert(product)
@@ -325,6 +333,84 @@ def _json_meta(store, key, default):
         return default
 
 
+#: Consecutive 404s before a section is retired. At a 5-minute cadence this is
+#: roughly a day, so a section is never dropped over a transient error.
+RETIRE_AFTER_404S = 288
+
+
+def resolve_tracked_sections(store, fetcher):
+    """Every section to scrape this cycle, plus any never seen before.
+
+    Sections are STICKY. Chrome Hearts spins up a category for one drop and
+    removes it from the nav afterwards, so "it is in the nav today" is the
+    wrong test - /hat and /scarf silently stopped being scraped that way.
+    Once a section is known we keep polling it until it 404s for about a day.
+    """
+    if config.CATEGORIES:
+        # Explicitly pinned: scrape exactly these and never expand the set.
+        return sorted({c if c.startswith("/") else "/" + c for c in config.CATEGORIES}), []
+
+    discovered = set(resolve_categories(fetcher))
+    discovered |= getattr(fetcher, "found_sections", set())
+    retired = set(_json_meta(store, "retired_sections", []))
+
+    if store.get_meta("tracked_sections") is None:
+        # Bootstrap. Without this, the first cycle after an upgrade announces
+        # every section that already existed as if it had just appeared.
+        tracked = set(store.known_categories()) | discovered
+        store.set_meta("tracked_sections", json.dumps(sorted(tracked)))
+        store.commit()
+        log.info("bootstrapped section tracking with %d sections", len(tracked))
+        return sorted(tracked - retired), []
+
+    tracked = set(_json_meta(store, "tracked_sections", []))
+    brand_new = sorted(discovered - tracked - retired)
+    live = sorted((discovered | tracked) - retired)
+    return live, brand_new
+
+
+def announce_sections(store, sections, notify=True):
+    """Tell Discord the moment a section exists that we have never seen.
+
+    This is the headline signal, not a footnote: a new category IS the drop.
+    It fires before any product in it has been parsed, so it is useful even
+    when the section's markup is something the parser has not met before.
+    """
+    if not sections:
+        return []
+    tracked = set(_json_meta(store, "tracked_sections", []))
+    store.set_meta("tracked_sections", json.dumps(sorted(tracked | set(sections))))
+    store.commit()
+    listing = "\n".join(f"• **{s.lstrip('/')}** - {config.BASE_URL}{s}" for s in sections)
+    log.warning("NEW SECTION(S): %s", ", ".join(sections))
+    if notify and config.ALERT_NEW_CATEGORIES:
+        notifier.send_text(
+            f"**New category on the site** ({len(sections)}):\n{listing}\n"
+            "Products in it will be checked from the next cycle."
+        )
+    return sections
+
+
+def retire_dead_sections(store, gone, scraped_ok):
+    """Retire a section only after it has 404'd for about a day."""
+    counts = _json_meta(store, "gone_counts", {})
+    retired = set(_json_meta(store, "retired_sections", []))
+    newly = []
+    for section in sorted(gone):
+        counts[section] = int(counts.get(section, 0)) + 1
+        if counts[section] >= RETIRE_AFTER_404S:
+            retired.add(section)
+            newly.append(section)
+    for section in scraped_ok:
+        counts.pop(section, None)
+    store.set_meta("gone_counts", json.dumps(counts, sort_keys=True))
+    if newly:
+        store.set_meta("retired_sections", json.dumps(sorted(retired)))
+        log.info("retired sections after sustained 404s: %s", newly)
+    store.commit()
+    return newly
+
+
 def coverage_watch(store, per_category, other_paths, notify=True):
     """Catch the monitor going blind in a way that otherwise looks like silence.
 
@@ -414,7 +500,9 @@ def main() -> int:
         print(f"\nDiscovered from nav + sitemap: {discovered or '(nothing - suspicious)'}")
         categories = resolve_categories(fetcher)
         print(f"Resolved {len(categories)} categories: {', '.join(categories)}\n")
-        products, failures, per_category = collect(fetcher, categories, store)
+        # No store here: --selftest returns before open_store() and must report
+        # only what the live site gave us, never products replayed from state.
+        products, failures, per_category, _gone = collect(fetcher, categories, None)
         print(f"Parsed {len(products)} products ({failures} categories failed)\n")
 
         if not products or not discovered:
@@ -488,10 +576,21 @@ def main() -> int:
             record_failure(store, "unhandled-exception", str(exc)[:300])
 
         if args.once:
-            if isinstance(result, dict) and result.get("error"):
-                log.error("cycle reported %s - exiting non-zero so CI shows red", result["error"])
+            if result.get("error"):
+                # Persist FIRST. A non-zero exit skips the workflow's state
+                # step, so failing immediately reset the failure counter every
+                # run - the Discord warning could never reach its threshold
+                # and the only signal was a GitHub email.
+                streak = int(store.get_meta("consecutive_failures", "0") or 0)
                 store.close()
-                return 1
+                threshold = config.FAILURE_ALERT_THRESHOLD
+                if threshold and streak >= threshold:
+                    log.error("cycle reported %s - %d in a row, failing the job",
+                              result["error"], streak)
+                    return 1
+                log.warning("cycle reported %s - %d in a row; not failing the job yet",
+                            result["error"], streak)
+                return 0
             break
 
         elapsed = time.time() - started

@@ -49,7 +49,9 @@ PRODUCT_HREF_RE = re.compile(
 #   /on/demandware.store/Sites-ChromeHearts-Site/en_US/Search-Show?cgid=SWEATPANTS
 # robots.txt disallows that form, so we derive the public alias (/sweatpants)
 # and request that instead - the disallowed URL is never fetched.
-CGID_RE = re.compile(r"[?&]cgid=([A-Za-z0-9_\-]+)", re.I)
+CGID_RE = re.compile(r"[?&](?:amp;)?cgid=([A-Za-z0-9_\-]+)", re.I)
+#: A plain internal link to a single-segment path, e.g. href="/sweatpants".
+SECTION_HREF_RE = re.compile(r"href=[\"'](?:https?://(?:www\.)?chromehearts\.com)?/([a-z0-9][a-z0-9\-]*)/?[\"'#?]", re.I)
 
 
 def is_product_id(pid):
@@ -61,13 +63,47 @@ def match_product_path(path):
     return match if match and is_product_id(match.group("pid")) else None
 
 
+def extract_sections(html):
+    """Every candidate shoppable section linked from a page.
+
+    Run against the homepage, the sitemap AND every category page we already
+    fetch, so a one-time drop category is found wherever it happens to be
+    linked - the nav, a hero banner, the sitemap, or another section's page.
+    Chrome Hearts creates these for a single drop and removes them later, so
+    "it was in the nav last cycle" is not a reliable way to find them.
+    """
+    sections = set()
+    if not html:
+        return sections
+    for match in CGID_RE.finditer(html):
+        slug = match.group(1).strip().lower().replace("_", "-")
+        if slug and slug not in NON_CATEGORY:
+            sections.add("/" + slug)
+    for match in SECTION_HREF_RE.finditer(html):
+        seg = match.group(1).lower()
+        if seg.endswith(".html") or seg in NON_CATEGORY:
+            continue
+        sections.add("/" + seg)
+    return sections
+
+
 def category_from_cgid(href):
     found = CGID_RE.search(href or "")
     if not found:
         return None
     slug = found.group(1).strip().lower().replace("_", "-")
     return "/" + slug if slug else None
-PRICE_RE = re.compile(r"(?:US)?\$\s?([0-9][0-9,]*(?:\.[0-9]{2})?)")
+# Only a bare or US$ price counts. Runners occasionally geolocate to Canada or
+# Mexico and the storefront answers in local currency, which was going into
+# state as USD: CH PLUS TIGHTS was recorded at $435 (C$435) and $7,050
+# (Mex$7,050). A letter immediately before the $ disqualifies it.
+PRICE_RE = re.compile(r"(?<![A-Za-z])(?:US)?\$\s?([0-9][0-9,]*(?:\.[0-9]{2})?)")
+LOCALISED_PRICE_RE = re.compile(r"(?<![A-Za-z])(?!US\$)([A-Za-z]{1,4})\$\s?[0-9]")
+
+
+def page_is_localised(html: str) -> bool:
+    """True when the storefront answered in a currency that is not USD."""
+    return bool(LOCALISED_PRICE_RE.search(html or ""))
 SOLD_OUT_RE = re.compile(r"sold\s*out|out\s*of\s*stock|unavailable", re.I)
 
 # Paths that are content, not shoppable categories.
@@ -258,6 +294,14 @@ def discover_categories(fetcher: Fetcher) -> List[str]:
     status, xml = fetcher.get(config.BASE_URL + "/sitemap_0.xml", use_cache=False)
     if status == 200 and xml:
         for loc in re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", xml):
+            # THE BUG THAT MISSED A DROP: a one-time category appears in the
+            # sitemap as .../Search-Show?cgid=SWEATPANTS. The section is in the
+            # query string, which _normalise_path discards, and the remaining
+            # path is multi-segment so it was dropped. Read the cgid first.
+            aliased = category_from_cgid(loc)
+            if aliased and aliased.lstrip("/") not in NON_CATEGORY:
+                found.add(aliased)
+                continue
             path = _normalise_path(loc)
             if not path or path == "/":
                 continue
@@ -266,6 +310,9 @@ def discover_categories(fetcher: Fetcher) -> List[str]:
                 found.add("/" + parts[0])
 
     fetcher.other_paths = other
+    if not hasattr(fetcher, "found_sections"):
+        fetcher.found_sections = set()
+    fetcher.found_sections |= found
     return sorted(found)
 
 
@@ -351,6 +398,10 @@ def parse_products(html: str, category: str) -> Dict[str, Product]:
     """Extract every product tile on a category page, keyed by product id."""
     soup = BeautifulSoup(html, "lxml")
     products: Dict[str, Product] = {}
+    localised = page_is_localised(html)
+    if localised:
+        log.warning("%s rendered in a non-USD currency - ignoring its names and prices",
+                    category)
 
     for anchor in soup.find_all("a", href=True):
         path = _normalise_path(anchor["href"])
@@ -368,10 +419,11 @@ def parse_products(html: str, category: str) -> Dict[str, Product]:
 
         existing = products.get(pid)
         product = existing or Product(pid=pid, url=url, category=category)
-        product.name = product.name or _clean_name(_tile_name(container, anchor))
+        if not localised:
+            product.name = product.name or _clean_name(_tile_name(container, anchor))
+            if price_match and not product.price:
+                product.price = "$" + price_match.group(1)
         product.image = product.image or _first_image(container)
-        if price_match and not product.price:
-            product.price = "$" + price_match.group(1)
         if SOLD_OUT_RE.search(text):
             product.in_stock = False
         products[pid] = product
@@ -432,8 +484,11 @@ def enrich(product: Product, fetcher: Fetcher) -> Product:
         if isinstance(offers, dict):
             price = offers.get("price") or offers.get("lowPrice")
             currency = offers.get("priceCurrency", "USD")
+            if price and currency not in ("USD", ""):
+                log.info("enrich: %s priced in %s - leaving price unset", product.url, currency)
+                price = None
             if price:
-                symbol = "$" if currency in ("USD", "") else f"{currency} "
+                symbol = "$"
                 try:
                     product.price = f"{symbol}{float(price):,.0f}" if float(price).is_integer() else f"{symbol}{float(price):,.2f}"
                 except (TypeError, ValueError):
@@ -494,4 +549,8 @@ def scrape_category(fetcher: Fetcher, category: str):
     if status != 200 or not html:
         log.warning("category %s returned %s", category, status)
         return None
+    # Free crawl: this page may link to a section nothing else mentions.
+    if not hasattr(fetcher, "found_sections"):
+        fetcher.found_sections = set()
+    fetcher.found_sections |= extract_sections(html)
     return parse_products(html, category)
