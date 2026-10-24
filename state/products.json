@@ -63,9 +63,11 @@
   "consecutive_failures": "0",
   "emptied_sections": "[]",
   "failure_alerted": "0",
+  "gone_counts": "{\"/sweatpants\": 1}",
   "last_heartbeat": "1792791442.1553524",
   "last_new_product_at": "1790123248.158881",
-  "seeded": "1"
+  "seeded": "1",
+  "tracked_sections": "[\"/baccarat\", \"/boxers-leggings\", \"/hat\", \"/intimates\", \"/scarf\", \"/scents\", \"/shirt\", \"/shop\", \"/socks\", \"/sweatpants\", \"/underwear\"]"
  },
  "products": {
   "053702REDXXX316": {
@@ -589,6 +591,6 @@
    "url": "https://www.chromehearts.com/scarf/double-peony-scarf/218126MABXXX00D.html"
   }
  },
- "updated_at": "2026-10-23T21:37:22Z",
+ "updated_at": "2026-10-24T04:23:07Z",
  "version": 1
 }
