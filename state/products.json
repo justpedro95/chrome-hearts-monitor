@@ -63,7 +63,7 @@
   "consecutive_failures": "0",
   "emptied_sections": "[]",
   "failure_alerted": "0",
-  "gone_counts": "{\"/sweatpants\": 18}",
+  "gone_counts": "{\"/sweatpants\": 19}",
   "last_heartbeat": "1793044285.9168115",
   "last_new_product_at": "1790123248.158881",
   "seeded": "1",
@@ -591,6 +591,6 @@
    "url": "https://www.chromehearts.com/scarf/double-peony-scarf/218126MABXXX00D.html"
   }
  },
- "updated_at": "2026-10-26T19:51:26Z",
+ "updated_at": "2026-10-26T23:24:47Z",
  "version": 1
 }
