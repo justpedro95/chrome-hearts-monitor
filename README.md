@@ -32,7 +32,19 @@ unchanged category page costs a 304 instead of a full download.
 
 ---
 
-## Deployment A — GitHub Actions (no server, free, always on)
+## Deployment A — an always-on Mac (fast; what this repo is set up for)
+
+`bash install/macos/install.sh`, then read
+[install/macos/README.md](install/macos/README.md).
+
+A launchd job polls every 60 seconds and actually keeps time. Use this when
+you need to catch a drop. GitHub Actions cannot: measured on this repo's own
+history, a 5-minute cron ran at a **median 14-minute** interval, with a worst
+gap of **185 minutes** and only ~**36%** of scheduled runs delivered.
+
+---
+
+## Deployment B — GitHub Actions (no server, free, slow)
 
 This is the zero-infrastructure path. A scheduled workflow wakes up every 5
 minutes, checks the site, pings Discord, and commits any catalog change back to
@@ -115,7 +127,7 @@ occasionally a run is skipped entirely. It is reliable in aggregate, not punctua
 
 ---
 
-## Deployment B — Docker on a server (60-second checks)
+## Deployment C — Docker on a server (60-second checks)
 
 Use this if you want tighter timing than GitHub's scheduler allows.
 
