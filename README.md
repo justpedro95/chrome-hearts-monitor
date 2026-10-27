@@ -32,7 +32,39 @@ unchanged category page costs a 304 instead of a full download.
 
 ---
 
-## Deployment A — an always-on Mac (fast; what this repo is set up for)
+## Deployment A — a cloud server (fastest, survives your power going out)
+
+On a fresh Ubuntu box, as root:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/justpedro95/chrome-hearts-monitor/main/install/vps/bootstrap.sh | bash
+```
+
+Installs Docker, asks for your webhook once, seeds state so nothing known is
+re-alerted, and runs under `restart: unless-stopped` so it survives reboots.
+Re-run to upgrade.
+
+### Why 15 seconds does not mean "sweep everything every 15 seconds"
+
+Ten sections at a 15-second sweep is **~57,600 requests and ~11 GB a day from
+one IP**. That gets the IP blocked, and a blocked monitor sees nothing. So
+polling is tiered:
+
+| Tier | Every | What it fetches | Catches |
+|---|---|---|---|
+| Fast | **15s** | the ~1 KB sitemap (plus the homepage every other tick), with conditional requests so an unchanged one costs a 304 | a **new drop category**, within 15s |
+| Full | 60s | every tracked section | a new product inside an existing section |
+
+Any change on the fast tier triggers a full sweep immediately. Total load is
+~14 requests/min and ~2.75 GB/day — a seventh of the naive approach, with
+15-second detection of the thing that actually signals a drop here.
+
+Raise `FAST_INTERVAL_SECONDS` / `POLL_INTERVAL_SECONDS` in `.env` to go gentler;
+lower them only if you are willing to risk the block.
+
+---
+
+## Deployment B — an always-on Mac (fast, but dies with your power)
 
 `bash install/macos/install.sh`, then read
 [install/macos/README.md](install/macos/README.md).
@@ -44,7 +76,7 @@ gap of **185 minutes** and only ~**36%** of scheduled runs delivered.
 
 ---
 
-## Deployment B — GitHub Actions (no server, free, slow)
+## Deployment C — GitHub Actions (no server, free, far too slow for a drop)
 
 This is the zero-infrastructure path. A scheduled workflow wakes up every 5
 minutes, checks the site, pings Discord, and commits any catalog change back to
@@ -127,7 +159,7 @@ occasionally a run is skipped entirely. It is reliable in aggregate, not punctua
 
 ---
 
-## Deployment C — Docker on a server (60-second checks)
+## Deployment D — Docker by hand (60-second checks)
 
 Use this if you want tighter timing than GitHub's scheduler allows.
 

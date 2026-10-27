@@ -17,6 +17,7 @@ still detects new products correctly and just posts a thinner embed.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import random
@@ -531,6 +532,18 @@ def enrich(product: Product, fetcher: Fetcher) -> Product:
 UNCHANGED = object()
 #: 404 - the path is not a section at all. NOT the same as a failed fetch.
 GONE = object()
+
+
+def fetch_fingerprint(fetcher: Fetcher, path: str):
+    """Hash of a cheap endpoint, or None when unchanged/unavailable.
+
+    Uses conditional requests, so an unchanged sitemap costs a 304 rather than
+    a download.
+    """
+    status, body = fetcher.get(config.BASE_URL + path)
+    if status != 200 or body is None:
+        return None, status
+    return hashlib.sha256(body.encode("utf-8", "replace")).hexdigest()[:32], status
 
 
 def scrape_category(fetcher: Fetcher, category: str):

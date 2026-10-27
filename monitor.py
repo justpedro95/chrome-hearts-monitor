@@ -22,7 +22,7 @@ from typing import Dict
 import config
 import notifier
 from scraper import (GONE, UNCHANGED, Fetcher, Product, discover_categories,
-                     enrich, resolve_categories, scrape_category)
+                     enrich, fetch_fingerprint, resolve_categories, scrape_category)
 from store import Store
 
 log = logging.getLogger("monitor")
@@ -468,6 +468,32 @@ def coverage_watch(store, per_category, other_paths, notify=True):
     return warnings
 
 
+#: Probed on the fast tier. The sitemap is ~1 KB and is where a new drop
+#: category shows up; the homepage is larger so it goes every other tick.
+FAST_PATHS = ("/sitemap_0.xml",)
+FAST_PATHS_ALT = ("/sitemap_0.xml", "/")
+
+
+def fast_probe(store, fetcher, tick: int):
+    """Cheap check for 'did anything change?'. Returns the paths that moved."""
+    paths = FAST_PATHS_ALT if tick % 2 == 0 else FAST_PATHS
+    prints = _json_meta(store, "fingerprints", {})
+    changed, updated = [], False
+    for path in paths:
+        fingerprint, status = fetch_fingerprint(fetcher, path)
+        if fingerprint is None:
+            continue              # 304, or a failed fetch - nothing to compare
+        if prints.get(path) != fingerprint:
+            if path in prints:    # first sighting is not a change
+                changed.append(path)
+            prints[path] = fingerprint
+            updated = True
+    if updated:
+        store.set_meta("fingerprints", json.dumps(prints, sort_keys=True))
+        store.commit()
+    return changed
+
+
 def open_store():
     """Pick the state backend: SQLite for long-running hosts, JSON for CI runs."""
     if config.STATE_BACKEND == "json":
@@ -553,13 +579,32 @@ def main() -> int:
         log.info("state reset - next cycle re-baselines without alerting")
 
     log.info(
-        "starting: interval=%ss jitter=%ss enrich=%s restocks=%s price=%s db=%s",
-        config.POLL_INTERVAL_SECONDS, config.JITTER_SECONDS, config.ENRICH_PRODUCTS,
-        config.ALERT_RESTOCKS, config.ALERT_PRICE_CHANGES, config.STATE_DB,
+        "starting: fast=%ss full=%ss fast_tier=%s enrich=%s restocks=%s price=%s",
+        config.FAST_INTERVAL_SECONDS, config.POLL_INTERVAL_SECONDS, config.FAST_TIER,
+        config.ENRICH_PRODUCTS, config.ALERT_RESTOCKS, config.ALERT_PRICE_CHANGES,
     )
+
+    last_full = 0.0
+    tick = 0
 
     while _running:
         started = time.time()
+
+        # Fast tier: probe cheap endpoints and only sweep when something moved
+        # or the full-sweep interval is due.
+        if not args.once and config.FAST_TIER:
+            due = (started - last_full) >= config.POLL_INTERVAL_SECONDS
+            moved = [] if due else fast_probe(store, fetcher, tick)
+            tick += 1
+            if not due and not moved:
+                deadline = started + config.FAST_INTERVAL_SECONDS
+                while _running and time.time() < deadline:
+                    time.sleep(min(1.0, max(0.05, deadline - time.time())))
+                continue
+            if moved:
+                log.info("fast tier: %s changed - sweeping now", ", ".join(moved))
+
+        last_full = started
         result = {}
         try:
             result = run_cycle(store, fetcher)
@@ -594,7 +639,11 @@ def main() -> int:
             break
 
         elapsed = time.time() - started
-        sleep_for = max(5.0, config.POLL_INTERVAL_SECONDS - elapsed + random.uniform(0, config.JITTER_SECONDS))
+        if config.FAST_TIER:
+            sleep_for = max(1.0, config.FAST_INTERVAL_SECONDS - elapsed)
+        else:
+            sleep_for = max(5.0, config.POLL_INTERVAL_SECONDS - elapsed
+                            + random.uniform(0, config.JITTER_SECONDS))
         log.debug("cycle took %.1fs, sleeping %.1fs", elapsed, sleep_for)
         deadline = time.time() + sleep_for
         while _running and time.time() < deadline:

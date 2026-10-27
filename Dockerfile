@@ -21,6 +21,6 @@ USER monitor
 VOLUME ["/data"]
 
 HEALTHCHECK --interval=5m --timeout=10s --start-period=1m \
-  CMD python -c "import os,time,sys; p=os.environ.get('STATE_DB','/data/state.db'); sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p) < 1800 else 1)"
+  CMD python -c "import os,time,sys; p=os.environ.get('STATE_JSON') if os.environ.get('STATE_BACKEND')=='json' else os.environ.get('STATE_DB','/data/state.db'); sys.exit(0 if p and os.path.exists(p) and time.time()-os.path.getmtime(p) < 86400 else 1)"
 
 CMD ["python", "monitor.py"]

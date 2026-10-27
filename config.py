@@ -50,6 +50,13 @@ PRICE_COLOR = _int("PRICE_COLOR", 0xE67E22)
 
 # --- Polling -----------------------------------------------------------------
 POLL_INTERVAL_SECONDS = _int("POLL_INTERVAL_SECONDS", 60)
+# Fast tier: a cheap change probe (the ~1 KB sitemap, and the homepage every
+# other tick). A new drop category changes the sitemap, so this catches it
+# within FAST_INTERVAL_SECONDS and triggers a full sweep immediately.
+# Sweeping every section this often would be ~57,600 requests and 11 GB a day
+# from one IP, which gets the IP blocked - and a blocked monitor sees nothing.
+FAST_TIER = _bool("FAST_TIER", True)
+FAST_INTERVAL_SECONDS = _int("FAST_INTERVAL_SECONDS", 15)
 JITTER_SECONDS = _int("JITTER_SECONDS", 15)
 REQUEST_DELAY_SECONDS = _float("REQUEST_DELAY_SECONDS", 1.5)
 REQUEST_TIMEOUT = _int("REQUEST_TIMEOUT", 20)

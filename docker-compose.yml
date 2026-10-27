@@ -4,6 +4,7 @@ services:
     image: chrome-hearts-monitor:latest
     container_name: chrome-hearts-monitor
     restart: unless-stopped
+    stop_grace_period: 20s
     env_file: .env
     volumes:
       - ./data:/data
