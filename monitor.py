@@ -19,10 +19,15 @@ import sys
 import time
 from typing import Dict
 
+import requests
+
 import config
 import notifier
+import hashlib
+
+import scraper
 from scraper import (GONE, UNCHANGED, Fetcher, Product, discover_categories,
-                     enrich, fetch_fingerprint, resolve_categories, scrape_category)
+                     enrich, resolve_categories, scrape_category)
 from store import Store
 
 log = logging.getLogger("monitor")
@@ -52,7 +57,7 @@ def _product_from_record(pid: str, record) -> Product:
     )
 
 
-def collect(fetcher: Fetcher, categories, store=None):
+def collect(fetcher: Fetcher, categories, store=None, between=None):
     """Scrape every category. Returns (products by pid, count of failed categories).
 
     A 304 replays that section's known products from state - nothing changed
@@ -71,6 +76,9 @@ def collect(fetcher: Fetcher, categories, store=None):
 
     for category in categories:
         result = scrape_category(fetcher, category)
+        if between is not None:
+            # Keep the fast probe on schedule while a sweep is in flight.
+            between()
         if result is UNCHANGED:
             replayed = known_by_category.get(category, {})
             per_category[category] = len(replayed)
@@ -98,7 +106,7 @@ def collect(fetcher: Fetcher, categories, store=None):
     return seen, failures, per_category, gone
 
 
-def run_cycle(store: Store, fetcher: Fetcher, notify: bool = True) -> dict:
+def run_cycle(store: Store, fetcher: Fetcher, notify: bool = True, between=None) -> dict:
     categories, brand_new = resolve_tracked_sections(store, fetcher)
     if not categories:
         log.error("no categories resolved - site layout may have changed")
@@ -108,7 +116,7 @@ def run_cycle(store: Store, fetcher: Fetcher, notify: bool = True) -> dict:
     for category in categories:
         store.add_category(category)
 
-    products, failures, per_category, gone = collect(fetcher, categories, store)
+    products, failures, per_category, gone = collect(fetcher, categories, store, between)
     log.info(
         "cycle: %d categories (%d failed), %d products on site, %d known",
         len(categories), failures, len(products), store.product_count(),
@@ -285,7 +293,17 @@ def _ago(timestamp: float) -> str:
     return f"{hours / 24:.0f} days ago"
 
 
-def maybe_heartbeat(store) -> bool:
+def _probe_report(prober) -> str:
+    stats = prober.stats() if prober else None
+    if not stats:
+        return ""
+    verdict = "on target" if stats["worst"] <= 25 else "**SLOWER THAN TARGET**"
+    return (f"\nNew-category probe: {stats['probes']} runs, median gap "
+            f"{stats['median']:.0f}s, p99 {stats['p99']:.0f}s, worst "
+            f"{stats['worst']:.0f}s - {verdict}.")
+
+
+def maybe_heartbeat(store, prober=None) -> bool:
     """Post a periodic 'still working' message.
 
     The timestamp lives in the store, not in memory: under GitHub Actions every
@@ -312,6 +330,7 @@ def maybe_heartbeat(store) -> bool:
         f"**Monitor healthy.** Tracking {store.product_count()} products across "
         f"{categories} sections. Last new product: {_ago(last_new)}. "
         f"Next check in ~{config.POLL_INTERVAL_SECONDS // 60 or 5} minutes."
+        + _probe_report(prober)
     )
     store.set_meta("last_heartbeat", now)
     store.commit()
@@ -369,7 +388,7 @@ def resolve_tracked_sections(store, fetcher):
     return live, brand_new
 
 
-def announce_sections(store, sections, notify=True):
+def announce_sections(store, sections, notify=True, via=None):
     """Tell Discord the moment a section exists that we have never seen.
 
     This is the headline signal, not a footnote: a new category IS the drop.
@@ -381,12 +400,21 @@ def announce_sections(store, sections, notify=True):
     tracked = set(_json_meta(store, "tracked_sections", []))
     store.set_meta("tracked_sections", json.dumps(sorted(tracked | set(sections))))
     store.commit()
+    now = time.time()
+    seen_at = time.strftime("%H:%M:%S UTC", time.gmtime(now))
+    detections = _json_meta(store, "section_detections", {})
+    for section in sections:
+        detections.setdefault(section, {"first_seen": now, "via": via or "sweep"})
+    store.set_meta("section_detections", json.dumps(detections, sort_keys=True))
+    store.commit()
+
     listing = "\n".join(f"• **{s.lstrip('/')}** - {config.BASE_URL}{s}" for s in sections)
-    log.warning("NEW SECTION(S): %s", ", ".join(sections))
+    source = f" via the {via}" if via else ""
+    log.warning("NEW SECTION(S)%s: %s", source, ", ".join(sections))
     if notify and config.ALERT_NEW_CATEGORIES:
         notifier.send_text(
             f"**New category on the site** ({len(sections)}):\n{listing}\n"
-            "Products in it will be checked from the next cycle."
+            f"First seen {seen_at}{source}. Scanning it for products now."
         )
     return sections
 
@@ -468,30 +496,105 @@ def coverage_watch(store, per_category, other_paths, notify=True):
     return warnings
 
 
-#: Probed on the fast tier. The sitemap is ~1 KB and is where a new drop
-#: category shows up; the homepage is larger so it goes every other tick.
-FAST_PATHS = ("/sitemap_0.xml",)
-FAST_PATHS_ALT = ("/sitemap_0.xml", "/")
+def _digest(items) -> str:
+    return hashlib.sha256("\n".join(sorted(items)).encode()).hexdigest()[:32]
 
 
-def fast_probe(store, fetcher, tick: int):
-    """Cheap check for 'did anything change?'. Returns the paths that moved."""
-    paths = FAST_PATHS_ALT if tick % 2 == 0 else FAST_PATHS
-    prints = _json_meta(store, "fingerprints", {})
-    changed, updated = [], False
-    for path in paths:
-        fingerprint, status = fetch_fingerprint(fetcher, path)
-        if fingerprint is None:
-            continue              # 304, or a failed fetch - nothing to compare
-        if prints.get(path) != fingerprint:
-            if path in prints:    # first sighting is not a change
-                changed.append(path)
-            prints[path] = fingerprint
-            updated = True
-    if updated:
-        store.set_meta("fingerprints", json.dumps(prints, sort_keys=True))
-        store.commit()
-    return changed
+class Prober:
+    """The fast tier: detect a new category within ~FAST_INTERVAL seconds.
+
+    Runs on its own clock, including BETWEEN section fetches of a full sweep,
+    so a sweep in flight never delays it. Fingerprints the MEANING of each
+    page - the sections and product links on it - not its bytes: homepages
+    carry rotating tokens, and a byte hash would read as "changed" on every
+    probe and trigger a full sweep every few seconds, which is the fastest way
+    to get the IP blocked.
+    """
+
+    def __init__(self):
+        self.last = 0.0
+        self.home = None
+        self.sitemap = None
+        self.sweep_requested = False
+        self.gaps = []               # seconds between probe starts
+        self.runs = 0
+
+    def due(self) -> bool:
+        return time.time() - self.last >= config.FAST_INTERVAL_SECONDS
+
+    def next_due(self) -> float:
+        return self.last + config.FAST_INTERVAL_SECONDS
+
+    def _fetch(self, fetcher, path, cached):
+        # Unconditional until we hold a body to fall back on after a 304.
+        status, body = fetcher.get(config.BASE_URL + path, use_cache=cached is not None)
+        if status == 200 and body:
+            return body, True
+        return cached, False
+
+    def run(self, store, fetcher, notify=True):
+        started = time.time()
+        if self.last:
+            self.gaps.append(started - self.last)
+            del self.gaps[:-2000]
+        self.last = started
+        self.runs += 1
+
+        self.sitemap, _ = self._fetch(fetcher, "/sitemap_0.xml", self.sitemap)
+        self.home, _ = self._fetch(fetcher, "/", self.home)
+
+        from_sitemap = scraper.sections_from_sitemap(self.sitemap)
+        from_home, other = scraper.sections_from_homepage(self.home)
+        home_products = set(scraper.parse_products(self.home, "/")) if self.home else set()
+
+        prints = _json_meta(store, "fingerprints", {})
+        current = {
+            "sitemap": _digest(from_sitemap),
+            "home": _digest(from_home | other | {f"p:{pid}" for pid in home_products}),
+        }
+        changed = [k for k, v in current.items() if k in prints and prints[k] != v]
+        if prints != current:
+            store.set_meta("fingerprints", json.dumps(current, sort_keys=True))
+            store.commit()
+
+        # Announce new sections right now - this is the 30-second path.
+        new = []
+        if store.get_meta("tracked_sections") is not None:
+            tracked = set(_json_meta(store, "tracked_sections", []))
+            retired = set(_json_meta(store, "retired_sections", []))
+            for via, found in (("sitemap", from_sitemap), ("homepage", from_home)):
+                fresh = sorted(found - tracked - retired - set(new))
+                if fresh:
+                    new += announce_sections(store, fresh, notify=notify, via=via)
+
+        if changed or new:
+            self.sweep_requested = True
+            log.info("fast tier: %s changed%s - sweeping",
+                     "+".join(changed) or "nothing",
+                     f", new sections {new}" if new else "")
+        return changed, new
+
+    def stats(self):
+        if not self.gaps:
+            return None
+        ordered = sorted(self.gaps)
+        return {
+            "probes": self.runs,
+            "median": ordered[len(ordered) // 2],
+            "p99": ordered[min(len(ordered) - 1, int(len(ordered) * 0.99))],
+            "worst": ordered[-1],
+        }
+
+
+def ping_healthcheck(ok: bool = True) -> None:
+    """Dead-man's switch. Never allowed to break the monitor."""
+    if not config.HEALTHCHECK_URL:
+        return
+    url = config.HEALTHCHECK_URL.rstrip("/") + ("" if ok else "/fail")
+    try:
+        requests.get(url, timeout=5)
+    except requests.RequestException as exc:
+        log.debug("healthcheck ping failed: %s", exc)
 
 
 def open_store():
@@ -584,37 +687,47 @@ def main() -> int:
         config.ENRICH_PRODUCTS, config.ALERT_RESTOCKS, config.ALERT_PRICE_CHANGES,
     )
 
+    prober = Prober() if (config.FAST_TIER and not args.once) else None
     last_full = 0.0
-    tick = 0
+
+    def between():
+        if prober is not None and prober.due():
+            prober.run(store, fetcher)
 
     while _running:
+        if prober is not None and prober.due():
+            try:
+                prober.run(store, fetcher)
+            except Exception:
+                log.exception("fast probe failed")
+
+        now = time.time()
+        sweep_due = (args.once
+                     or now - last_full >= config.POLL_INTERVAL_SECONDS
+                     or (prober is not None and prober.sweep_requested))
+        if not sweep_due:
+            wake = last_full + config.POLL_INTERVAL_SECONDS
+            if prober is not None:
+                wake = min(wake, prober.next_due())
+            while _running and time.time() < wake:
+                time.sleep(min(0.5, max(0.05, wake - time.time())))
+            continue
+
+        if prober is not None:
+            prober.sweep_requested = False
         started = time.time()
-
-        # Fast tier: probe cheap endpoints and only sweep when something moved
-        # or the full-sweep interval is due.
-        if not args.once and config.FAST_TIER:
-            due = (started - last_full) >= config.POLL_INTERVAL_SECONDS
-            moved = [] if due else fast_probe(store, fetcher, tick)
-            tick += 1
-            if not due and not moved:
-                deadline = started + config.FAST_INTERVAL_SECONDS
-                while _running and time.time() < deadline:
-                    time.sleep(min(1.0, max(0.05, deadline - time.time())))
-                continue
-            if moved:
-                log.info("fast tier: %s changed - sweeping now", ", ".join(moved))
-
         last_full = started
         result = {}
         try:
-            result = run_cycle(store, fetcher)
+            result = run_cycle(store, fetcher, between=between if prober else None)
             if result.get("error"):
                 log.error("cycle error: %s", result["error"])
                 record_failure(store, result["error"], result.get("detail", ""),
                                immediate=bool(result.get("immediate")))
             else:
                 record_success(store)
-                maybe_heartbeat(store)
+                maybe_heartbeat(store, prober)
+                ping_healthcheck(ok=True)
         except Exception as exc:
             log.exception("unhandled error in cycle")
             result = {"error": "unhandled-exception"}
@@ -638,16 +751,14 @@ def main() -> int:
                 return 0
             break
 
-        elapsed = time.time() - started
-        if config.FAST_TIER:
-            sleep_for = max(1.0, config.FAST_INTERVAL_SECONDS - elapsed)
-        else:
-            sleep_for = max(5.0, config.POLL_INTERVAL_SECONDS - elapsed
-                            + random.uniform(0, config.JITTER_SECONDS))
-        log.debug("cycle took %.1fs, sleeping %.1fs", elapsed, sleep_for)
-        deadline = time.time() + sleep_for
-        while _running and time.time() < deadline:
-            time.sleep(min(1.0, deadline - time.time()))
+        log.debug("sweep took %.1fs", time.time() - started)
+        if prober is None and not args.once:
+            # No fast tier: plain jittered interval between sweeps.
+            pause = max(5.0, config.POLL_INTERVAL_SECONDS - (time.time() - started)
+                        + random.uniform(0, config.JITTER_SECONDS))
+            deadline = time.time() + pause
+            while _running and time.time() < deadline:
+                time.sleep(min(1.0, deadline - time.time()))
 
     store.close()
     log.info("stopped")

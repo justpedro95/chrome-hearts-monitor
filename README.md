@@ -44,25 +44,44 @@ Installs Docker, asks for your webhook once, seeds state so nothing known is
 re-alerted, and runs under `restart: unless-stopped` so it survives reboots.
 Re-run to upgrade.
 
-### Why 15 seconds does not mean "sweep everything every 15 seconds"
+### How a new category is caught within 30 seconds
 
-Ten sections at a 15-second sweep is **~57,600 requests and ~11 GB a day from
-one IP**. That gets the IP blocked, and a blocked monitor sees nothing. So
-polling is tiered:
+Two clocks run in one process:
 
-| Tier | Every | What it fetches | Catches |
+| Tier | Every | Fetches | Catches |
 |---|---|---|---|
-| Fast | **15s** | the ~1 KB sitemap (plus the homepage every other tick), with conditional requests so an unchanged one costs a 304 | a **new drop category**, within 15s |
-| Full | 60s | every tracked section | a new product inside an existing section |
+| Probe | **10s** | the ~1 KB sitemap and the homepage, conditionally (an unchanged one costs a 304) | a **new category** — announced to Discord on the probe that sees it |
+| Sweep | 60s | every tracked section | a new product inside an existing section |
 
-Any change on the fast tier triggers a full sweep immediately. Total load is
-~14 requests/min and ~2.75 GB/day — a seventh of the naive approach, with
-15-second detection of the thing that actually signals a drop here.
+The probe runs **between section fetches** of a sweep in flight, so a sweep
+never delays it. Measured end to end against the real main loop, with a
+category appearing mid-sweep: the Discord message went out in **0.34s** against
+a 0.4s probe interval and a 2.4s sweep (`tests/test_fast_tier.py`). In
+production that bounds detection at roughly **10s + one fetch** — about 13s
+worst case.
 
-Raise `FAST_INTERVAL_SECONDS` / `POLL_INTERVAL_SECONDS` in `.env` to go gentler;
-lower them only if you are willing to risk the block.
+The probe fingerprints the **meaning** of each page — the sections and product
+links on it — not its bytes. Homepages carry rotating tokens; hashing raw HTML
+would read as "changed" every probe and trigger a sweep every 10 seconds,
+which is the quickest way to get the server's IP blocked.
 
----
+Sweeping *every section* every 10–15 seconds instead would be roughly 57,600
+requests and 11 GB a day from one IP. A blocked monitor sees nothing.
+
+Every 12-hour heartbeat reports the probe cadence it actually achieved —
+median, p99 and worst gap — and flags it if the worst gap breaks 25 seconds.
+The 30-second claim is checked by the system itself, not just asserted here.
+
+### What it costs
+
+The monitor needs about **$5–6/month** of server; it uses a fraction of one
+core. Spending more does not make it faster. Things worth money, in order:
+
+1. **The server** — ~$6/mo.
+2. **healthchecks.io** — free. Pinged after every healthy sweep, it emails you
+   if the monitor goes silent: the one failure it cannot report about itself.
+3. **A proxy** — only *if* Chrome Hearts' CDN starts blocking the server.
+   Don't buy one pre-emptively; set `PROXY_URL` in `.env` if it happens.
 
 ## Deployment B — an always-on Mac (fast, but dies with your power)
 

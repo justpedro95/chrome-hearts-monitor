@@ -56,9 +56,13 @@ POLL_INTERVAL_SECONDS = _int("POLL_INTERVAL_SECONDS", 60)
 # Sweeping every section this often would be ~57,600 requests and 11 GB a day
 # from one IP, which gets the IP blocked - and a blocked monitor sees nothing.
 FAST_TIER = _bool("FAST_TIER", True)
-FAST_INTERVAL_SECONDS = _int("FAST_INTERVAL_SECONDS", 15)
+FAST_INTERVAL_SECONDS = _int("FAST_INTERVAL_SECONDS", 10)
+# Dead-man's switch: pinged after every healthy sweep. Point it at a free
+# healthchecks.io check and you are told when the monitor itself goes silent -
+# the one failure the monitor cannot report about itself.
+HEALTHCHECK_URL = os.environ.get("HEALTHCHECK_URL", "").strip()
 JITTER_SECONDS = _int("JITTER_SECONDS", 15)
-REQUEST_DELAY_SECONDS = _float("REQUEST_DELAY_SECONDS", 1.5)
+REQUEST_DELAY_SECONDS = _float("REQUEST_DELAY_SECONDS", 0.75)
 REQUEST_TIMEOUT = _int("REQUEST_TIMEOUT", 20)
 
 # --- Scope -------------------------------------------------------------------

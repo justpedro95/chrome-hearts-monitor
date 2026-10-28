@@ -53,25 +53,36 @@ else
   if [[ "$WEBHOOK" != https://discord.com/api/webhooks/* ]]; then
     echo "ERROR: that does not look like a Discord webhook URL."; exit 1
   fi
+  echo
+  echo "Optional: paste a healthchecks.io ping URL so you are told if the"
+  echo "monitor itself ever goes silent. Press Enter to skip."
+  read -r HEALTH < /dev/tty || HEALTH=""
+  umask 077
   cat > .env <<ENV
 DISCORD_WEBHOOK_URL=$WEBHOOK
-STATE_BACKEND=json
-STATE_JSON=/data/state.json
-FAST_TIER=true
-FAST_INTERVAL_SECONDS=15
-POLL_INTERVAL_SECONDS=60
-REQUEST_DELAY_SECONDS=1.0
-ALERT_NEW_PRODUCTS=true
-ALERT_NEW_CATEGORIES=true
-ALERT_RESTOCKS=false
-ALERT_PRICE_CHANGES=false
-ENRICH_PRODUCTS=true
-HEARTBEAT_HOURS=12
-LOG_LEVEL=INFO
+HEALTHCHECK_URL=$HEALTH
 ENV
   chmod 600 .env
   echo "==> Wrote .env (chmod 600)"
 fi
+
+# Settings this version expects. Added only if absent, so an upgrade never
+# overwrites a value you changed by hand.
+ensure() { grep -q "^$1=" .env || echo "$1=$2" >> .env; }
+ensure STATE_BACKEND          json
+ensure STATE_JSON             /data/state.json
+ensure FAST_TIER              true
+ensure FAST_INTERVAL_SECONDS  10
+ensure POLL_INTERVAL_SECONDS  60
+ensure REQUEST_DELAY_SECONDS  0.75
+ensure ALERT_NEW_PRODUCTS     true
+ensure ALERT_NEW_CATEGORIES   true
+ensure ALERT_RESTOCKS         false
+ensure ALERT_PRICE_CHANGES    false
+ensure ENRICH_PRODUCTS        true
+ensure HEARTBEAT_HOURS        12
+ensure LOG_LEVEL              INFO
+ensure HEALTHCHECK_URL        ""
 
 # ---- seed state so nothing known is re-alerted ----------------------------
 if [ ! -f data/state.json ] && [ -f state/products.json ]; then
@@ -89,7 +100,7 @@ docker compose exec -T chrome-hearts-monitor python monitor.py --test-webhook ||
 
 cat <<EOF
 
-RUNNING. Fast probe every 15s, full sweep every 60s. Restarts on reboot.
+RUNNING. New-category probe every 10s, full sweep every 60s. Restarts on reboot.
 
   Logs      : docker compose -f $DIR/docker-compose.yml logs -f
   Status    : docker compose -f $DIR/docker-compose.yml ps

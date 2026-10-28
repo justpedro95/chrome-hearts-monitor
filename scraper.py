@@ -17,7 +17,6 @@ still detects new products correctly and just posts a thinner embed.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import random
@@ -251,64 +250,79 @@ def _normalise_path(href: str) -> Optional[str]:
     return path or "/"
 
 
-def discover_categories(fetcher: Fetcher) -> List[str]:
-    """Pull candidate category paths from the homepage nav and the XML sitemap.
+def sections_from_homepage(html):
+    """(sections, untracked_paths) linked from the homepage."""
+    found, other = set(), set()
+    if not html:
+        return found, other
+    soup = BeautifulSoup(html, "lxml")
+    for a in soup.find_all("a", href=True):
+        # A cgid nav link carries the section in its QUERY STRING, which
+        # _normalise_path discards - read it before normalising.
+        aliased = category_from_cgid(a["href"])
+        if aliased and aliased.lstrip("/") not in NON_CATEGORY:
+            found.add(aliased)
+            # Resolved - do not also report its raw storefront URL as an
+            # untracked link, or the watchdog cries wolf every cycle.
+            continue
 
-    Auto-discovery matters: when Chrome Hearts opens a brand-new section for a
-    drop, it shows up in the nav before any product in it is known to us.
-    """
+        path = _normalise_path(a["href"])
+        if not path or path == "/":
+            continue
+        parts = [p for p in path.split("/") if p]
+        if len(parts) != 1:
+            # Not a plain section path. Keep it as "something the site links
+            # to that we do not understand" so the coverage watchdog can
+            # surface it.
+            if not path.endswith(".html") and not match_product_path(path):
+                other.add(path)
+            continue
+        seg = parts[0]
+        if seg.endswith(".html") or seg in NON_CATEGORY:
+            continue
+        found.add("/" + seg)
+    return found, other
+
+
+def sections_from_sitemap(xml):
+    """Sections listed in the XML sitemap."""
     found = set()
-    other = set()
+    if not xml:
+        return found
+    for loc in re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", xml):
+        # THE BUG THAT MISSED A DROP: a one-time category appears in the
+        # sitemap as .../Search-Show?cgid=SWEATPANTS. The section is in the
+        # query string, which _normalise_path discards, and the remaining path
+        # is multi-segment so it was dropped. Read the cgid first.
+        aliased = category_from_cgid(loc)
+        if aliased and aliased.lstrip("/") not in NON_CATEGORY:
+            found.add(aliased)
+            continue
+        path = _normalise_path(loc)
+        if not path or path == "/":
+            continue
+        parts = [p for p in path.split("/") if p]
+        if len(parts) == 1 and not parts[0].endswith(".html") and parts[0] not in NON_CATEGORY:
+            found.add("/" + parts[0])
+    return found
 
+
+def discover_categories(fetcher: Fetcher) -> List[str]:
+    """Pull candidate category paths from the homepage and the XML sitemap.
+
+    When Chrome Hearts opens a brand-new section for a drop it appears in one
+    of these before any product in it is known to us.
+    """
     status, html = fetcher.get(config.BASE_URL + "/", use_cache=False)
     if status == 200 and html:
-        soup = BeautifulSoup(html, "lxml")
-        for a in soup.find_all("a", href=True):
-            # A cgid nav link carries the section in its QUERY STRING, which
-            # _normalise_path discards - read it before normalising.
-            aliased = category_from_cgid(a["href"])
-            if aliased and aliased.lstrip("/") not in NON_CATEGORY:
-                found.add(aliased)
-                # Resolved - do not also report its raw storefront URL as an
-                # untracked link, or the watchdog cries wolf every cycle.
-                continue
-
-            path = _normalise_path(a["href"])
-            if not path or path == "/":
-                continue
-            parts = [p for p in path.split("/") if p]
-            if len(parts) != 1:
-                # Not a plain section path. Keep it as "something the site
-                # links to that we do not understand" so the coverage watchdog
-                # can surface it - this is how a /sweatpants-shaped section
-                # gets noticed even if its link form is one we never handled.
-                if not path.endswith(".html") and not match_product_path(path):
-                    other.add(path)
-                continue
-            seg = parts[0]
-            if seg.endswith(".html") or seg in NON_CATEGORY:
-                continue
-            found.add("/" + seg)
+        found, other = sections_from_homepage(html)
     else:
         log.warning("category discovery: homepage returned %s", status)
+        found, other = set(), set()
 
     status, xml = fetcher.get(config.BASE_URL + "/sitemap_0.xml", use_cache=False)
     if status == 200 and xml:
-        for loc in re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", xml):
-            # THE BUG THAT MISSED A DROP: a one-time category appears in the
-            # sitemap as .../Search-Show?cgid=SWEATPANTS. The section is in the
-            # query string, which _normalise_path discards, and the remaining
-            # path is multi-segment so it was dropped. Read the cgid first.
-            aliased = category_from_cgid(loc)
-            if aliased and aliased.lstrip("/") not in NON_CATEGORY:
-                found.add(aliased)
-                continue
-            path = _normalise_path(loc)
-            if not path or path == "/":
-                continue
-            parts = [p for p in path.split("/") if p]
-            if len(parts) == 1 and not parts[0].endswith(".html") and parts[0] not in NON_CATEGORY:
-                found.add("/" + parts[0])
+        found |= sections_from_sitemap(xml)
 
     fetcher.other_paths = other
     if not hasattr(fetcher, "found_sections"):
@@ -532,18 +546,6 @@ def enrich(product: Product, fetcher: Fetcher) -> Product:
 UNCHANGED = object()
 #: 404 - the path is not a section at all. NOT the same as a failed fetch.
 GONE = object()
-
-
-def fetch_fingerprint(fetcher: Fetcher, path: str):
-    """Hash of a cheap endpoint, or None when unchanged/unavailable.
-
-    Uses conditional requests, so an unchanged sitemap costs a 304 rather than
-    a download.
-    """
-    status, body = fetcher.get(config.BASE_URL + path)
-    if status != 200 or body is None:
-        return None, status
-    return hashlib.sha256(body.encode("utf-8", "replace")).hexdigest()[:32], status
 
 
 def scrape_category(fetcher: Fetcher, category: str):
