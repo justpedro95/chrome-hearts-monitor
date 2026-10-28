@@ -131,6 +131,11 @@ def run_cycle(store: Store, fetcher: Fetcher, notify: bool = True, between=None)
 
     # Sections linked only from another section's page surface here; announce
     # them now so a new category is known within one cycle, not the next.
+    new_section_watch(store, per_category, gone,
+                      getattr(fetcher, "homepage_renders", set()), notify=notify)
+    if hasattr(fetcher, "homepage_renders"):
+        fetcher.homepage_renders = set()
+
     if not config.CATEGORIES:
         late = sorted(getattr(fetcher, "found_sections", set())
                       - set(_json_meta(store, "tracked_sections", []))
@@ -388,7 +393,7 @@ def resolve_tracked_sections(store, fetcher):
     return live, brand_new
 
 
-def announce_sections(store, sections, notify=True, via=None):
+def announce_sections(store, sections, notify=True, via=None, sources=None):
     """Tell Discord the moment a section exists that we have never seen.
 
     This is the headline signal, not a footnote: a new category IS the drop.
@@ -403,12 +408,22 @@ def announce_sections(store, sections, notify=True, via=None):
     now = time.time()
     seen_at = time.strftime("%H:%M:%S UTC", time.gmtime(now))
     detections = _json_meta(store, "section_detections", {})
+    sources = sources or {}
     for section in sections:
-        detections.setdefault(section, {"first_seen": now, "via": via or "sweep"})
+        record = {"first_seen": now, "via": via or "sweep"}
+        if sources.get(section):
+            record["source_url"] = sources[section]
+        detections.setdefault(section, record)
     store.set_meta("section_detections", json.dumps(detections, sort_keys=True))
     store.commit()
 
-    listing = "\n".join(f"• **{s.lstrip('/')}** - {config.BASE_URL}{s}" for s in sections)
+    def line(section):
+        text = f"• **{section.lstrip('/')}** - {config.BASE_URL}{section}"
+        if sources.get(section):
+            text += f"\n   if that link is dead, the site's own link: {sources[section]}"
+        return text
+
+    listing = "\n".join(line(s) for s in sections)
     source = f" via the {via}" if via else ""
     log.warning("NEW SECTION(S)%s: %s", source, ", ".join(sections))
     if notify and config.ALERT_NEW_CATEGORIES:
@@ -417,6 +432,49 @@ def announce_sections(store, sections, notify=True, via=None):
             f"First seen {seen_at}{source}. Scanning it for products now."
         )
     return sections
+
+
+#: A section counts as "new" for this long after it was first announced.
+NEW_SECTION_WINDOW_SECONDS = 6 * 3600
+
+
+def new_section_watch(store, per_category, gone, homepage_renders, notify=True):
+    """Warn once when a NEW section yields no products we can read.
+
+    The coverage watchdog only fires when a section that used to hold
+    products goes empty, so a brand-new section that is unreadable from its
+    first sweep - which is precisely what a drop looks like when something
+    goes wrong - was invisible. /sports-mesh was announced and then recorded
+    zero products, and nothing said so.
+    """
+    detections = _json_meta(store, "section_detections", {})
+    warned = set(_json_meta(store, "unreadable_new_sections", []))
+    now = time.time()
+    warnings = []
+    for section, info in sorted(detections.items()):
+        if section in warned or now - float(info.get("first_seen", 0)) > NEW_SECTION_WINDOW_SECONDS:
+            continue
+        if section in gone:
+            why = "its link returns **404**"
+        elif section in per_category and per_category[section] == 0:
+            why = ("it now just shows the **homepage** - it was probably taken down, "
+                   "or the link is wrong" if section in homepage_renders else
+                   "the page loads but I can't read any products on it - they may "
+                   "load with JavaScript, or use a link format I don't recognise")
+        else:
+            continue
+        link = info.get("source_url") or f"{config.BASE_URL}{section}"
+        warnings.append(f"**Check this one yourself:** new category "
+                        f"`{section.lstrip('/')}` - {why}.\n{link}")
+        warned.add(section)
+    if warnings:
+        store.set_meta("unreadable_new_sections", json.dumps(sorted(warned)))
+        store.commit()
+        for w in warnings:
+            log.warning(w.replace("**", "").replace("`", ""))
+        if notify:
+            notifier.send_text("\n\n".join(warnings))
+    return warnings
 
 
 def retire_dead_sections(store, gone, scraped_ok):
@@ -562,10 +620,12 @@ class Prober:
         if store.get_meta("tracked_sections") is not None:
             tracked = set(_json_meta(store, "tracked_sections", []))
             retired = set(_json_meta(store, "retired_sections", []))
+            sources = scraper.cgid_sources(self.sitemap, self.home)
             for via, found in (("sitemap", from_sitemap), ("homepage", from_home)):
                 fresh = sorted(found - tracked - retired - set(new))
                 if fresh:
-                    new += announce_sections(store, fresh, notify=notify, via=via)
+                    new += announce_sections(store, fresh, notify=notify, via=via,
+                                             sources=sources)
 
         if changed or new:
             self.sweep_requested = True

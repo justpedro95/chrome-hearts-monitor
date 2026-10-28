@@ -155,6 +155,14 @@ of where the runner happened to be.
 `FAILURE_ALERT_THRESHOLD` fails the job - otherwise the failure counter resets
 every run and the Discord warning can never fire.
 
+**A new category it can't read is reported, not swallowed.** If a section
+first seen in the last 6 hours comes back with no readable products, you get
+one "check this yourself" message saying why: its link 404s, it already shows
+the homepage (taken down, or the link is wrong), or the page loads but the
+products are in a form the parser does not recognise. Each alert also carries
+the URL exactly as the site linked it, because a section's public link can die
+while the site still lists it.
+
 **It watches its own coverage.** Two checks run every cycle, because the worst
 failure mode here is going blind in a way that looks exactly like a quiet week:
 

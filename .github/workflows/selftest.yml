@@ -31,6 +31,7 @@ jobs:
           python tests/test_regressions.py
           python tests/test_sections.py
           python tests/test_fast_tier.py
+          python tests/test_new_sections.py
       - name: Live scrape
         env:
           LOG_LEVEL: INFO

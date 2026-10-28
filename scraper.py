@@ -284,6 +284,39 @@ def sections_from_homepage(html):
     return found, other
 
 
+CANONICAL_RE = re.compile(
+    r"<link[^>]+rel=[\"']canonical[\"'][^>]*href=[\"']([^\"']+)[\"']"
+    r"|<link[^>]+href=[\"']([^\"']+)[\"'][^>]*rel=[\"']canonical[\"']", re.I)
+
+
+def renders_homepage(html) -> bool:
+    """True when a section URL just shows the homepage.
+
+    That is how this storefront answers for a category it has taken down
+    (/hat, /sports-mesh): a 200 with the homepage, not a 404.
+    """
+    match = CANONICAL_RE.search(html or "")
+    if not match:
+        return False
+    href = (match.group(1) or match.group(2) or "").strip()
+    return _normalise_path(href) == "/"
+
+
+def cgid_sources(*bodies):
+    """{public alias: URL exactly as the site linked it} for cgid sections.
+
+    The alias can die while the site still lists the section (/sweatpants
+    404s today). An alert must carry a link that works, so keep the original.
+    """
+    sources = {}
+    for body in bodies:
+        for raw in re.findall(r"(https?://[^\s\"'<>]*?[?&](?:amp;)?cgid=[A-Za-z0-9_\-]+)", body or ""):
+            alias = category_from_cgid(raw)
+            if alias:
+                sources.setdefault(alias, raw.replace("&amp;", "&"))
+    return sources
+
+
 def sections_from_sitemap(xml):
     """Sections listed in the XML sitemap."""
     found = set()
@@ -568,4 +601,8 @@ def scrape_category(fetcher: Fetcher, category: str):
     if not hasattr(fetcher, "found_sections"):
         fetcher.found_sections = set()
     fetcher.found_sections |= extract_sections(html)
+    if renders_homepage(html):
+        if not hasattr(fetcher, "homepage_renders"):
+            fetcher.homepage_renders = set()
+        fetcher.homepage_renders.add(category)
     return parse_products(html, category)
